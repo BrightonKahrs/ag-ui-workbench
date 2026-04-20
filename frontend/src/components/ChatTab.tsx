@@ -82,6 +82,14 @@ export default function ChatTab({ toggles, onEvents }: Props) {
                   <span className="cursor-blink text-purple-400">▌</span>
                 )}
               </div>
+              {/* Reasoning token indicator */}
+              {msg.reasoningTokens && msg.reasoningTokens > 0 && (
+                <div className="mt-2 flex items-center gap-1.5 text-[10px] text-orange-400 bg-orange-950/50 border border-orange-900/50 rounded px-2 py-1">
+                  <span>🧠</span>
+                  <span className="font-mono font-semibold">{msg.reasoningTokens}</span>
+                  <span className="opacity-70">reasoning tokens used</span>
+                </div>
+              )}
             </div>
           </div>
         ))}

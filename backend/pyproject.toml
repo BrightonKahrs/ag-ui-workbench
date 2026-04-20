@@ -12,6 +12,7 @@ dependencies = [
     "aiohttp",
     "pydantic>=2.0",
     "python-dotenv",
+    "fastmcp>=2.0",
 ]
 
 [tool.uv]

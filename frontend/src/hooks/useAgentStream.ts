@@ -21,6 +21,7 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   isStreaming?: boolean;
+  reasoningTokens?: number;
 }
 
 export interface ToolCall {
@@ -108,6 +109,7 @@ export function useAgentStream(
       // Track current assistant message being streamed
       let currentMessageId: string | null = null;
       let currentContent = "";
+      let pendingReasoningTokens = 0; // Accumulate across the run
 
       // Select endpoint based on model mode
       const resolvedEndpoint = toggles.modelMode === "reasoning" ? "/reasoning" : endpoint;
@@ -148,13 +150,25 @@ export function useAgentStream(
             }
 
             case AGUIEventType.TEXT_MESSAGE_END: {
-              setMessages((prev) =>
-                prev.map((m) =>
-                  m.id === event.messageId
-                    ? { ...m, isStreaming: false }
-                    : m
-                )
-              );
+              // Attach any accumulated reasoning tokens to this message
+              const msgEndId = event.messageId;
+              if (pendingReasoningTokens > 0) {
+                const tokens = pendingReasoningTokens;
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === msgEndId ? { ...m, isStreaming: false, reasoningTokens: tokens } : m
+                  )
+                );
+                pendingReasoningTokens = 0;
+              } else {
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === event.messageId
+                      ? { ...m, isStreaming: false }
+                      : m
+                  )
+                );
+              }
               // Add to conversation history
               if (currentContent) {
                 conversationRef.current.push({
@@ -206,6 +220,18 @@ export function useAgentStream(
 
             case AGUIEventType.RUN_ERROR: {
               setError(event.message);
+              break;
+            }
+
+            case AGUIEventType.CUSTOM: {
+              // Accumulate reasoning token usage from CUSTOM events
+              if (event.name === "usage" && event.value && typeof event.value === "object") {
+                const usage = event.value as Record<string, unknown>;
+                const reasoningTokens = usage["openai.reasoning_tokens"] as number | undefined;
+                if (reasoningTokens && reasoningTokens > 0) {
+                  pendingReasoningTokens += reasoningTokens;
+                }
+              }
               break;
             }
 
