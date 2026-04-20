@@ -1,13 +1,13 @@
 # AG-UI Playground
 
-An educational demo application showcasing the **AG-UI (Agent-User Interaction) Protocol** integrated with **Microsoft Agent Framework** (Python). This playground lets you visualize, toggle, and understand AG-UI features in real-time.
+An educational demo showcasing the **AG-UI (Agent-User Interaction) Protocol** with **Microsoft Agent Framework** (Python) and **Azure AI Foundry**. Toggle features, inspect events, and understand how AG-UI works in real-time.
 
 ## What is AG-UI?
 
-AG-UI is an open, lightweight, event-based protocol that standardizes how AI agents connect to user-facing applications. It sits alongside MCP (tools) and A2A (agent-to-agent) in the modern agentic protocol stack:
+AG-UI is an open, event-based protocol that standardizes how AI agents stream responses to frontends. It sits alongside MCP (tools) and A2A (agent-to-agent) in the modern agentic protocol stack:
 
 - **MCP** gives agents tools
-- **A2A** lets agents talk to other agents  
+- **A2A** lets agents talk to other agents
 - **AG-UI** brings agents into user-facing applications
 
 ## Features Demonstrated
@@ -16,80 +16,108 @@ AG-UI is an open, lightweight, event-based protocol that standardizes how AI age
 |---------|-------------|-----|
 | Streaming Chat | `TEXT_MESSAGE_START/CONTENT/END` | Chat |
 | Tool Calls | `TOOL_CALL_START/ARGS/END/RESULT` | Chat |
-| Human-in-the-Loop | Approval interrupts | Chat |
+| MCP Server Tools | `TOOL_CALL_*` (via MCP) | Chat |
+| Reasoning Tokens | `CUSTOM` (usage with `openai.reasoning_tokens`) | Chat |
 | Shared State | `STATE_SNAPSHOT`, `STATE_DELTA` | State |
 | Predictive Updates | Streaming tool args → state | State |
+| Data Visualization | Live Recharts from shared state | State |
 | Step Tracking | `STEP_STARTED/STEP_FINISHED` | Both |
-| Event Observability | All raw events in inspector | Both |
+| Event Observability | Collapsible grouped events in inspector | Both |
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────┐
-│  React Frontend (Vite + TypeScript)     │
-│  ┌──────────┐ ┌──────────┐ ┌────────┐  │
-│  │ Chat Tab │ │State Tab │ │Inspector│  │
-│  └─────┬────┘ └─────┬────┘ └────────┘  │
-│        │ Raw SSE     │                   │
-│        │ (fetch API) │                   │
-└────────┼─────────────┼──────────────────┘
+┌──────────────────────────────────────────────┐
+│  React Frontend (Vite + TypeScript)          │
+│  ┌──────────┐ ┌──────────┐ ┌─────────────┐  │
+│  │ Chat Tab │ │State Tab │ │Event Inspector│ │
+│  │ + tools  │ │ + charts │ │ (grouped)    │  │
+│  └─────┬────┘ └─────┬────┘ └─────────────┘  │
+│        │ Raw SSE     │                        │
+│        │ (fetch API) │                        │
+└────────┼─────────────┼───────────────────────┘
          │ HTTP POST + SSE
          ▼
-┌─────────────────────────────────────────┐
-│  Python Backend (FastAPI)               │
-│  ┌─────────────┐  ┌──────────────────┐  │
-│  │ /chat       │  │ /state           │  │
-│  │ ChatAgent   │  │ AgentFramework   │  │
-│  │ + tools     │  │ Agent + state    │  │
-│  └──────┬──────┘  └────────┬─────────┘  │
-│         │                   │            │
-│         └─────────┬─────────┘            │
-│                   ▼                      │
-│         agent-framework-ag-ui            │
-│         (SSE event bridge)               │
-└───────────────────┬─────────────────────┘
-                    │
-                    ▼
-         ┌──────────────────┐
-         │ Azure AI Foundry │
-         │ (GPT-4o-mini)    │
-         └──────────────────┘
+┌──────────────────────────────────────────────┐
+│  Python Backend (FastAPI) :8888              │
+│  ┌─────────┐ ┌───────────┐ ┌──────────────┐ │
+│  │ /chat   │ │/reasoning │ │ /state       │ │
+│  │ +local  │ │ o4-mini   │ │ DataVizAgent │ │
+│  │ +MCP    │ │ +🧠tokens │ │ +Recharts    │ │
+│  └────┬────┘ └─────┬─────┘ └──────┬───────┘ │
+│       └─────┬──────┘               │         │
+│             ▼                      │         │
+│   agent-framework-ag-ui           │         │
+│   (SSE event bridge)              │         │
+└──────┬──────────────────────┬─────┘─────────┘
+       │                      │
+       ▼                      ▼
+┌──────────────┐    ┌──────────────────┐
+│ MCP Server   │    │ Azure AI Foundry │
+│ :8889        │    │ gpt-4.1-mini     │
+│ (FastMCP)    │    │ o4-mini          │
+└──────────────┘    └──────────────────┘
 ```
 
 ## Quick Start
 
 ### Prerequisites
 
-- Python 3.10+
-- Node.js 20+
-- Azure OpenAI endpoint (via Azure AI Foundry)
-- Azure CLI authenticated (`az login`)
+- **Python 3.10+** and [UV](https://docs.astral.sh/uv/) (Python package manager)
+- **Node.js 20+**
+- **Azure CLI** authenticated (`az login`)
+- **Azure AI Foundry** resource with model deployments
 
-### Backend Setup
+### 1. Configure Environment
 
 ```bash
 cd backend
-python -m venv .venv
-.venv\Scripts\activate  # Windows
-pip install -r requirements.txt
-
-# Configure environment
 cp .env.example .env
-# Edit .env with your Azure OpenAI endpoint
-
-# Run
-python server.py
 ```
 
-### Frontend Setup
+Edit `.env` with your Foundry endpoint and model deployment names:
+
+```env
+FOUNDRY_PROJECT_ENDPOINT=https://your-resource.services.ai.azure.com/
+FOUNDRY_MODEL_CHAT=gpt-4.1-mini
+FOUNDRY_MODEL_REASONING=o4-mini
+```
+
+### 2. Install Dependencies
 
 ```bash
-cd frontend
+# Backend (uses UV)
+cd backend
+uv sync
+
+# Frontend
+cd ../frontend
 npm install
+```
+
+### 3. Run (3 terminals)
+
+**Terminal 1 — MCP Server** (local tool server on `:8889`):
+```bash
+cd backend
+uv run python mcp_server.py
+```
+
+**Terminal 2 — Backend** (FastAPI + AG-UI on `:8888`):
+```bash
+cd backend
+uv run uvicorn server:app --port 8888
+```
+
+**Terminal 3 — Frontend** (Vite dev server on `:5173`):
+```bash
+cd frontend
 npm run dev
 ```
 
-Open http://localhost:5173 - the frontend proxies `/api/*` to the backend at `:8888`.
+Open **http://localhost:5173** — the frontend proxies `/api/*` to the backend.
+
+> **Note:** The MCP server is optional. If it's not running, the backend starts without MCP tools and logs a warning.
 
 ## How It Works
 
@@ -103,18 +131,39 @@ Communication flows via **HTTP POST** (client → server) and **Server-Sent Even
 
 ### Event Inspector
 
-The right panel shows **every raw AG-UI event** as it streams in, color-coded by type:
-- 🔵 Blue: Lifecycle events (RUN_STARTED, RUN_FINISHED)
-- 🟢 Green: Text messages (streaming tokens)
-- 🟡 Yellow: Tool calls (function invocations)
-- 🟣 Purple: State events (snapshots and deltas)
-- 🔴 Red: Errors
+The right panel shows **every AG-UI event** grouped by category with collapsible headers and running counts:
+- 🔵 **Lifecycle** — `RUN_STARTED`, `RUN_FINISHED`
+- 🟢 **Text Messages** — streaming tokens with char count
+- 🟡 **Tool Calls** — function name + args + result
+- 🟣 **State** — snapshots and JSON Patch deltas
+- 🟠 **Reasoning** — reasoning token usage from `CUSTOM` events
+- ⚡ **Custom** — usage telemetry, metadata
 
-Click any event to see its full JSON payload.
+Click any group to expand (first 5 shown, then "Show all N"). Click any event for full JSON.
 
-### Feature Toggles
+### Model Modes
 
-The left panel lets you enable/disable AG-UI features to see how they affect the event stream.
+Toggle between models in the left sidebar:
+- **Chat** (`gpt-4.1-mini`) — standard streaming
+- **Reasoning** (`o4-mini`) — reasoning model with 🧠 token badge on messages
+
+### MCP Server Integration
+
+The local MCP server (`mcp_server.py`) provides tools via the Model Context Protocol:
+- `search_knowledge_base` — search info about AG-UI, MCP, Agent Framework
+- `list_datasets` / `query_dataset` — browse and query sample data
+- `compute_statistics` — descriptive stats on numeric data
+- `get_server_info` — MCP server metadata
+
+These appear as standard `TOOL_CALL` events in the inspector, demonstrating MCP's role in the agentic stack.
+
+### Shared State & Data Visualization
+
+The **State** tab demonstrates bidirectional state sync:
+1. Chat with the DataViz agent to create charts
+2. Agent calls `set_chart` with a JSON config
+3. Predictive state updates stream the chart as it's generated
+4. Frontend renders live Recharts visualization (bar, line, area, pie, scatter, composed)
 
 ## AG-UI Event Types Reference
 
@@ -123,19 +172,19 @@ enum AGUIEventType {
   // Lifecycle
   RUN_STARTED, RUN_FINISHED, RUN_ERROR,
   STEP_STARTED, STEP_FINISHED,
-  
+
   // Text Messages (streaming)
   TEXT_MESSAGE_START, TEXT_MESSAGE_CONTENT, TEXT_MESSAGE_END,
-  
+
   // Tool Calls
   TOOL_CALL_START, TOOL_CALL_ARGS, TOOL_CALL_END, TOOL_CALL_RESULT,
-  
+
   // State Management
   STATE_SNAPSHOT,  // Full state replacement
   STATE_DELTA,     // JSON Patch (RFC 6902) incremental update
-  
+
   // Other
-  MESSAGES_SNAPSHOT, RAW, CUSTOM
+  MESSAGES_SNAPSHOT, CUSTOM, RAW
 }
 ```
 
@@ -143,12 +192,16 @@ enum AGUIEventType {
 
 | File | Purpose |
 |------|---------|
-| `frontend/src/utils/sse-client.ts` | Raw SSE parser showing AG-UI wire protocol |
-| `frontend/src/hooks/useAgentStream.ts` | React hook managing AG-UI event handling |
+| `backend/mcp_server.py` | Local MCP server (FastMCP) with knowledge + data tools |
+| `backend/server.py` | FastAPI server with AG-UI endpoints + MCP lifecycle |
+| `backend/agents/chat_agent.py` | Chat/reasoning agent with local + MCP tools |
+| `backend/agents/stateful_agent.py` | Data viz agent with Pydantic-validated set_chart |
+| `backend/tools/demo_tools.py` | Local demo tools (weather, calculate, time) |
+| `frontend/src/utils/sse-client.ts` | Raw SSE parser — AG-UI wire protocol |
+| `frontend/src/hooks/useAgentStream.ts` | React hook for AG-UI events + reasoning tokens |
 | `frontend/src/hooks/useSharedState.ts` | JSON Patch state sync for STATE_DELTA |
-| `frontend/src/components/EventInspector.tsx` | Real-time event visualization |
-| `backend/server.py` | FastAPI server with AG-UI endpoints |
-| `backend/agents/stateful_agent.py` | Shared state agent with predictive updates |
+| `frontend/src/components/EventInspector.tsx` | Collapsible grouped event visualization |
+| `frontend/src/components/SharedStateTab.tsx` | Recharts data viz from shared state |
 
 ## License
 
