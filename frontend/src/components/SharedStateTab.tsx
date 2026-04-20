@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { TimestampedEvent } from "../types/ag-ui";
 import { useSharedState } from "../hooks/useSharedState";
 import {
@@ -212,8 +212,10 @@ export default function SharedStateTab({ onEvents }: Props) {
 
   const [input, setInput] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  // Buffer: keep last valid chart to avoid blanking during streaming updates
-  const [lastValidChart, setLastValidChart] = useState<ChartState | undefined>();
+  // Buffer: keep last valid chart to avoid blanking during streaming updates (use ref to prevent re-render loops)
+  const lastValidChartRef = useRef<ChartState | undefined>(undefined);
+  // Force re-render counter when lastValidChart changes (needed since ref doesn't trigger render)
+  const [, setChartTick] = useState(0);
 
   // Forward events to inspector
   useEffect(() => {
@@ -234,41 +236,40 @@ export default function SharedStateTab({ onEvents }: Props) {
 
   const handleClear = () => {
     clearState();
-    setLastValidChart(undefined);
+    lastValidChartRef.current = undefined;
+    setChartTick((t) => t + 1);
   };
 
   // state.chart may be a JSON string (from predict_state streaming chart_json)
   // or an object (from STATE_SNAPSHOT after full parsing). Handle both.
+  // Memoize to prevent new object references on every render
   const rawChart = state.chart;
-  let currentChart: ChartState | undefined;
-  if (typeof rawChart === "string") {
-    try {
-      currentChart = JSON.parse(rawChart) as ChartState;
-    } catch {
-      // Partial JSON string still streaming — not renderable yet
-      currentChart = undefined;
+  const currentChart = useMemo<ChartState | undefined>(() => {
+    if (typeof rawChart === "string") {
+      try {
+        return JSON.parse(rawChart) as ChartState;
+      } catch {
+        return undefined; // Partial JSON still streaming
+      }
     }
-  } else if (rawChart && typeof rawChart === "object") {
-    currentChart = rawChart as ChartState;
+    if (rawChart && typeof rawChart === "object") {
+      return rawChart as ChartState;
+    }
+    return undefined;
+  }, [rawChart]);
+
+  // Update lastValidChart ref synchronously (no useEffect needed — avoids infinite loops)
+  if (currentChart && currentChart.data && currentChart.series) {
+    lastValidChartRef.current = currentChart;
+  }
+  // Clear buffer when run finishes with no chart
+  if (!isRunning && state.chart === undefined && lastValidChartRef.current) {
+    lastValidChartRef.current = undefined;
   }
 
-  // Update last valid chart when we get a complete one
-  useEffect(() => {
-    if (currentChart && currentChart.data && currentChart.series) {
-      setLastValidChart(currentChart);
-    }
-  }, [currentChart]);
-
-  // Clear lastValidChart when STATE_SNAPSHOT explicitly has no chart
-  useEffect(() => {
-    if (!isRunning && state.chart === undefined && lastValidChart) {
-      setLastValidChart(undefined);
-    }
-  }, [state.chart, isRunning, lastValidChart]);
-
   // Display: prefer current valid chart, fall back to buffered one
-  const displayChart = currentChart ?? lastValidChart;
-  const isStreamingChart = isRunning && !currentChart && !!lastValidChart;
+  const displayChart = currentChart ?? lastValidChartRef.current;
+  const isStreamingChart = isRunning && !currentChart && !!lastValidChartRef.current;
 
   return (
     <div className="flex-1 flex flex-col">
@@ -391,7 +392,7 @@ export default function SharedStateTab({ onEvents }: Props) {
           )}
 
           {/* Chart Area */}
-          <div className="flex-1 p-3 min-h-0 relative">
+          <div className="flex-1 p-3 min-h-[200px] min-w-[200px] relative">
             {!displayChart ? (
               <div className="flex items-center justify-center h-full text-gray-600">
                 <div className="text-center">

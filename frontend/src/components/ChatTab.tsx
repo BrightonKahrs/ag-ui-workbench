@@ -29,12 +29,13 @@ function ToolCallCard({ tc, toggles }: { tc: ToolCall; toggles: FeatureToggles }
   const isActive = tc.status === "calling";
   const isApproval = tc.status === "awaiting_approval";
   const isRejected = tc.status === "rejected";
+  const isError = tc.status === "error" || (tc.result && tc.result.startsWith("Error"));
 
   const borderColor = isActive
     ? "border-yellow-800 bg-yellow-950"
     : isApproval
     ? "border-amber-700 bg-amber-950"
-    : isRejected
+    : isRejected || isError
     ? "border-red-800 bg-red-950"
     : "border-green-800 bg-green-950";
 
@@ -42,11 +43,11 @@ function ToolCallCard({ tc, toggles }: { tc: ToolCall; toggles: FeatureToggles }
     ? "text-yellow-400"
     : isApproval
     ? "text-amber-400"
-    : isRejected
+    : isRejected || isError
     ? "text-red-400"
     : "text-green-400";
 
-  const icon = isActive ? "⏳" : isApproval ? "🔐" : isRejected ? "✗" : "✓";
+  const icon = isActive ? "⏳" : isApproval ? "🔐" : isRejected || isError ? "✗" : "✓";
 
   return (
     <div className="flex justify-start">
@@ -57,7 +58,7 @@ function ToolCallCard({ tc, toggles }: { tc: ToolCall; toggles: FeatureToggles }
         >
           <span>{icon}</span>
           <span>
-            {isActive ? "Calling" : isApproval ? "Awaiting approval" : isRejected ? "Rejected" : "Called"}:
+            {isActive ? "Calling" : isApproval ? "Awaiting approval" : isRejected ? "Rejected" : isError ? "Error" : "Called"}:
           </span>
           <span className="font-mono">{tc.name}</span>
           <span className="ml-auto text-gray-600 text-[10px]">
@@ -75,7 +76,9 @@ function ToolCallCard({ tc, toggles }: { tc: ToolCall; toggles: FeatureToggles }
             {tc.result && (
               <div>
                 <div className="text-[10px] text-gray-500 uppercase font-semibold mb-0.5">Result</div>
-                <pre className="text-xs text-gray-300 overflow-x-auto whitespace-pre-wrap max-h-32 overflow-y-auto">
+                <pre className={`text-xs overflow-x-auto whitespace-pre-wrap max-h-32 overflow-y-auto ${
+                  isError ? "text-red-400" : "text-gray-300"
+                }`}>
                   {tc.result}
                 </pre>
               </div>
@@ -121,7 +124,7 @@ export default function ChatTab({ toggles, onEvents }: Props) {
   };
 
   return (
-    <div className="flex-1 flex flex-col">
+    <div className="flex-1 flex flex-col overflow-hidden min-h-0">
       {/* Tab Description */}
       <div className="bg-gray-850 border-b border-gray-800 px-4 py-2">
         <p className="text-xs text-gray-500">

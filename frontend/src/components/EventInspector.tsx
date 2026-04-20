@@ -119,9 +119,82 @@ function getEventSummary(event: TimestampedEvent["event"]): string {
   }
 }
 
-// --- Contiguous Group Model ---
-// Groups consecutive events that share the same category prefix.
-// Preserves chronological order while reducing noise.
+// --- Per-Run Chain Model ---
+// Groups all events between RUN_STARTED and RUN_FINISHED/RUN_ERROR into a single "run chain".
+// Within each chain, consecutive events of the same category are sub-grouped.
+// Events before the first RUN_STARTED are placed in a "pre-run" group.
+
+interface RunChain {
+  id: string;
+  runId: string | null;
+  threadId: string | null;
+  events: TimestampedEvent[];
+  subGroups: EventGroup[];
+  firstTimestamp: number;
+  lastTimestamp: number;
+  isComplete: boolean;
+  hasError: boolean;
+}
+
+function buildRunChains(events: TimestampedEvent[]): RunChain[] {
+  if (events.length === 0) return [];
+
+  const chains: RunChain[] = [];
+  let currentChain: TimestampedEvent[] = [];
+  let currentRunId: string | null = null;
+  let currentThreadId: string | null = null;
+  let chainStarted = false;
+
+  const flushChain = (complete: boolean, hasError: boolean) => {
+    if (currentChain.length === 0) return;
+    chains.push({
+      id: `run-${chains.length}`,
+      runId: currentRunId,
+      threadId: currentThreadId,
+      events: currentChain,
+      subGroups: groupContiguousEvents(currentChain),
+      firstTimestamp: currentChain[0].timestamp,
+      lastTimestamp: currentChain[currentChain.length - 1].timestamp,
+      isComplete: complete,
+      hasError,
+    });
+    currentChain = [];
+    currentRunId = null;
+    currentThreadId = null;
+    chainStarted = false;
+  };
+
+  for (const te of events) {
+    if (te.event.type === AGUIEventType.RUN_STARTED) {
+      // Flush any preceding events as an incomplete chain
+      if (currentChain.length > 0 && chainStarted) {
+        flushChain(false, false);
+      } else if (currentChain.length > 0) {
+        // Pre-run events (shouldn't happen normally but handle gracefully)
+        flushChain(false, false);
+      }
+      chainStarted = true;
+      currentRunId = (te.event as { runId?: string }).runId || null;
+      currentThreadId = (te.event as { threadId?: string }).threadId || null;
+      currentChain.push(te);
+    } else if (te.event.type === AGUIEventType.RUN_FINISHED) {
+      currentChain.push(te);
+      flushChain(true, false);
+    } else if (te.event.type === AGUIEventType.RUN_ERROR) {
+      currentChain.push(te);
+      flushChain(true, true);
+    } else {
+      currentChain.push(te);
+    }
+  }
+
+  // Flush remaining (incomplete/still running)
+  if (currentChain.length > 0) {
+    flushChain(false, false);
+  }
+
+  return chains;
+}
 
 interface EventGroup {
   id: string;
@@ -208,6 +281,7 @@ export default function EventInspector({ events }: Props) {
   const [autoScroll, setAutoScroll] = useState(true);
   const [filter, setFilter] = useState<string>("");
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [expandedRuns, setExpandedRuns] = useState<Set<string>>(new Set());
   const [fullyExpandedGroups, setFullyExpandedGroups] = useState<Set<string>>(new Set());
   const [expandedEvents, setExpandedEvents] = useState<Set<string>>(new Set());
 
@@ -227,9 +301,9 @@ export default function EventInspector({ events }: Props) {
       )
     : events;
 
-  // When filtering, show flat list. Otherwise, show grouped view.
-  const groups = useMemo(
-    () => (filter ? null : groupContiguousEvents(filteredEvents)),
+  // When filtering, show flat list. Otherwise, show per-run chains.
+  const runChains = useMemo(
+    () => (filter ? null : buildRunChains(filteredEvents)),
     [filteredEvents, filter]
   );
 
@@ -238,7 +312,6 @@ export default function EventInspector({ events }: Props) {
       const next = new Set(prev);
       if (next.has(id)) {
         next.delete(id);
-        // Also reset "show all" when collapsing
         setFullyExpandedGroups((fp) => {
           const nfp = new Set(fp);
           nfp.delete(id);
@@ -247,6 +320,15 @@ export default function EventInspector({ events }: Props) {
       } else {
         next.add(id);
       }
+      return next;
+    });
+  };
+
+  const toggleRun = (id: string) => {
+    setExpandedRuns((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
   };
@@ -323,72 +405,122 @@ export default function EventInspector({ events }: Props) {
           <div className="text-center text-gray-600 text-sm py-8">
             No events yet. Send a message to see AG-UI events stream in.
           </div>
-        ) : groups ? (
-          /* Grouped view — contiguous events collapsed by category */
-          groups.map((group) => {
-            const isExpanded = expandedGroups.has(group.id);
-            const isSingleton = group.events.length === 1;
-            // Singletons render directly without a group wrapper
-            if (isSingleton) {
-              return renderEvent(group.events[0]);
-            }
-            const summary = getGroupSummary(group);
+        ) : runChains ? (
+          /* Per-run chain view */
+          runChains.map((chain, chainIdx) => {
+            const isRunExpanded = expandedRuns.has(chain.id);
+            const statusIcon = chain.hasError ? "❌" : chain.isComplete ? "✅" : "⏳";
+            const statusColor = chain.hasError
+              ? "border-red-800 bg-red-950/50"
+              : chain.isComplete
+              ? "border-blue-800 bg-blue-950/50"
+              : "border-yellow-800 bg-yellow-950/50";
+            const statusText = chain.hasError
+              ? "text-red-400"
+              : chain.isComplete
+              ? "text-blue-400"
+              : "text-yellow-400";
+
             return (
-              <div key={group.id} className="space-y-0.5">
-                {/* Group header */}
+              <div key={chain.id} className="space-y-0.5">
+                {/* Run chain header */}
                 <div
-                  className={`rounded px-2 py-1.5 cursor-pointer transition-colors border ${getCategoryColor(group.category)} hover:opacity-90`}
-                  onClick={() => toggleGroup(group.id)}
+                  className={`rounded-lg px-2 py-1.5 cursor-pointer transition-colors border ${statusColor} hover:opacity-90`}
+                  onClick={() => toggleRun(chain.id)}
                 >
                   <div className="flex items-center gap-2">
                     <span className="text-[10px] opacity-60 select-none">
-                      {isExpanded ? "▼" : "▶"}
+                      {isRunExpanded ? "▼" : "▶"}
                     </span>
-                    <span className="text-xs">
-                      {getCategoryIcon(group.category)}
-                    </span>
-                    <span className="text-xs font-mono font-bold">
-                      {group.category}
+                    <span className="text-xs">{statusIcon}</span>
+                    <span className={`text-xs font-bold ${statusText}`}>
+                      Run {chainIdx + 1}
                     </span>
                     <span className="text-[10px] font-mono bg-black/30 rounded px-1.5 py-0.5">
-                      {group.events.length}
+                      {chain.events.length}
                     </span>
-                    {summary && (
-                      <span className="text-[10px] opacity-60 truncate flex-1">
-                        {summary}
+                    {chain.threadId && (
+                      <span className="text-[10px] opacity-40 font-mono truncate">
+                        {chain.threadId.slice(0, 12)}…
                       </span>
                     )}
-                    <span className="text-[10px] opacity-50 font-mono">
-                      {formatTimestamp(group.firstTimestamp)}
+                    <span className="text-[10px] opacity-50 font-mono ml-auto">
+                      {formatTimestamp(chain.firstTimestamp)}
                     </span>
                   </div>
                 </div>
-                {/* Expanded children — capped unless fully expanded */}
-                {isExpanded && (
-                  <div className="space-y-0.5">
-                    {(() => {
-                      const isFullyExpanded = fullyExpandedGroups.has(group.id);
-                      const visibleEvents = isFullyExpanded
-                        ? group.events
-                        : group.events.slice(0, MAX_VISIBLE_CHILDREN);
-                      const hiddenCount = group.events.length - MAX_VISIBLE_CHILDREN;
+
+                {/* Expanded run — show sub-groups */}
+                {isRunExpanded && (
+                  <div className="ml-2 border-l-2 border-blue-900/40 pl-1 space-y-0.5">
+                    {chain.subGroups.map((group) => {
+                      const isExpanded = expandedGroups.has(group.id);
+                      const isSingleton = group.events.length === 1;
+
+                      if (isSingleton) {
+                        return renderEvent(group.events[0], true);
+                      }
+
+                      const summary = getGroupSummary(group);
                       return (
-                        <>
-                          {visibleEvents.map((te) => renderEvent(te, true))}
-                          {!isFullyExpanded && hiddenCount > 0 && (
-                            <button
-                              className="ml-3 text-[10px] text-gray-500 hover:text-gray-300 py-1 px-2 rounded bg-gray-800/50 hover:bg-gray-800 transition-colors"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setFullyExpandedGroups((prev) => new Set([...prev, group.id]));
-                              }}
-                            >
-                              Show all {group.events.length} events (+{hiddenCount} more)
-                            </button>
+                        <div key={group.id} className="space-y-0.5">
+                          <div
+                            className={`rounded px-2 py-1 cursor-pointer transition-colors border ${getCategoryColor(group.category)} hover:opacity-90`}
+                            onClick={() => toggleGroup(group.id)}
+                          >
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] opacity-60 select-none">
+                                {isExpanded ? "▼" : "▶"}
+                              </span>
+                              <span className="text-xs">
+                                {getCategoryIcon(group.category)}
+                              </span>
+                              <span className="text-xs font-mono font-bold">
+                                {group.category}
+                              </span>
+                              <span className="text-[10px] font-mono bg-black/30 rounded px-1.5 py-0.5">
+                                {group.events.length}
+                              </span>
+                              {summary && (
+                                <span className="text-[10px] opacity-60 truncate flex-1">
+                                  {summary}
+                                </span>
+                              )}
+                              <span className="text-[10px] opacity-50 font-mono">
+                                {formatTimestamp(group.firstTimestamp)}
+                              </span>
+                            </div>
+                          </div>
+                          {isExpanded && (
+                            <div className="space-y-0.5">
+                              {(() => {
+                                const isFullyExpanded = fullyExpandedGroups.has(group.id);
+                                const visibleEvents = isFullyExpanded
+                                  ? group.events
+                                  : group.events.slice(0, MAX_VISIBLE_CHILDREN);
+                                const hiddenCount = group.events.length - MAX_VISIBLE_CHILDREN;
+                                return (
+                                  <>
+                                    {visibleEvents.map((te) => renderEvent(te, true))}
+                                    {!isFullyExpanded && hiddenCount > 0 && (
+                                      <button
+                                        className="ml-3 text-[10px] text-gray-500 hover:text-gray-300 py-1 px-2 rounded bg-gray-800/50 hover:bg-gray-800 transition-colors"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setFullyExpandedGroups((prev) => new Set([...prev, group.id]));
+                                        }}
+                                      >
+                                        Show all {group.events.length} events (+{hiddenCount} more)
+                                      </button>
+                                    )}
+                                  </>
+                                );
+                              })()}
+                            </div>
                           )}
-                        </>
+                        </div>
                       );
-                    })()}
+                    })}
                   </div>
                 )}
               </div>
