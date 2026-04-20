@@ -42,6 +42,10 @@ export interface RunFinishedEvent {
   threadId: string;
   runId: string;
   result?: unknown;
+  interrupt?: Array<{
+    id: string;
+    value: Record<string, unknown>;
+  }>;
 }
 
 export interface RunErrorEvent {
@@ -215,6 +219,7 @@ export interface AGUIRunRequest {
   state?: Record<string, unknown>;
   tools?: AGUIToolDefinition[];
   forwardedProps?: Record<string, unknown>;
+  resume?: Record<string, unknown>;
 }
 
 export interface AGUIToolDefinition {
@@ -227,6 +232,8 @@ export interface AGUIToolDefinition {
 
 export type ModelMode = "chat" | "reasoning";
 
+export type ReasoningEffort = "low" | "medium" | "high";
+
 export interface FeatureToggles {
   streaming: boolean;
   toolCalls: boolean;
@@ -235,6 +242,7 @@ export interface FeatureToggles {
   predictiveUpdates: boolean;
   stepEvents: boolean;
   modelMode: ModelMode;
+  reasoningEffort: ReasoningEffort;
 }
 
 export const DEFAULT_TOGGLES: FeatureToggles = {
@@ -245,4 +253,5 @@ export const DEFAULT_TOGGLES: FeatureToggles = {
   predictiveUpdates: true,
   stepEvents: true,
   modelMode: "chat",
+  reasoningEffort: "medium",
 };

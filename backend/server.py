@@ -1,30 +1,43 @@
 """AG-UI Playground Backend Server.
 
 Exposes AG-UI endpoints:
-- /chat      - Basic streaming chat with tool calls + MCP tools (chat model)
-- /reasoning - Chat with reasoning model (emits CUSTOM usage events with reasoning tokens)
+- /chat      - Dynamic chat endpoint (reads forwardedProps for model mode, HITL, etc.)
 - /state     - Shared state agent (data viz) with predictive updates
 
 Managed with UV: `uv run server.py`
 MCP server must be running on :8889: `uv run python mcp_server.py`
 """
 
+import logging
 import os
+from collections import OrderedDict
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 
+from ag_ui.encoder import EventEncoder
 from agent_framework import MCPStreamableHTTPTool
 from agent_framework_ag_ui import add_agent_framework_fastapi_endpoint
+from agent_framework_ag_ui._agent import AgentConfig
+from agent_framework_ag_ui._agent_run import run_agent_stream
+from agent_framework_ag_ui._types import AGUIRequest
 from agents.chat_agent import create_chat_agent
 from agents.stateful_agent import create_stateful_agent
 
 load_dotenv()
 
+logger = logging.getLogger(__name__)
+
 # MCP tool - connected in lifespan
 mcp_tool: MCPStreamableHTTPTool | None = None
+
+# Shared pending approvals registry across requests
+# This allows the resume flow to find approvals emitted during the initial request
+pending_approvals: OrderedDict[str, str] = OrderedDict()
 
 
 @asynccontextmanager
@@ -40,27 +53,17 @@ async def lifespan(app: FastAPI):
         )
         await mcp_tool.__aenter__()
 
-        # Create agents with MCP tools available
-        chat_agent = create_chat_agent(model_mode="chat", mcp_tools=mcp_tool)
-        reasoning_agent = create_chat_agent(model_mode="reasoning", mcp_tools=mcp_tool)
+        # Register stateful agent endpoint (fixed - no dynamic config needed)
         stateful_agent = create_stateful_agent()
-
-        # Register AG-UI endpoints
-        add_agent_framework_fastapi_endpoint(app, chat_agent, "/chat")
-        add_agent_framework_fastapi_endpoint(app, reasoning_agent, "/reasoning")
         add_agent_framework_fastapi_endpoint(app, stateful_agent, "/state")
 
         print(f"✅ MCP server connected at {mcp_url}")
         yield
     except Exception as e:
-        # Fall back without MCP if server isn't running
         print(f"⚠️  MCP connection failed ({e}), starting without MCP tools")
-        chat_agent = create_chat_agent(model_mode="chat")
-        reasoning_agent = create_chat_agent(model_mode="reasoning")
-        stateful_agent = create_stateful_agent()
+        mcp_tool = None
 
-        add_agent_framework_fastapi_endpoint(app, chat_agent, "/chat")
-        add_agent_framework_fastapi_endpoint(app, reasoning_agent, "/reasoning")
+        stateful_agent = create_stateful_agent()
         add_agent_framework_fastapi_endpoint(app, stateful_agent, "/state")
         yield
     finally:
@@ -88,16 +91,107 @@ app.add_middleware(
 )
 
 
+@app.post("/chat", tags=["AG-UI"])
+async def dynamic_chat_endpoint(request_body: AGUIRequest) -> StreamingResponse:
+    """Dynamic chat endpoint that reads forwardedProps for HITL, model mode, etc.
+
+    This replaces the static endpoint registration to support per-request
+    configuration of model mode, human-in-the-loop approval, and reasoning options.
+    """
+    input_data = request_body.model_dump(exclude_none=True)
+
+    # Extract playground options from forwardedProps
+    forwarded = input_data.get("forwarded_props") or {}
+    playground = forwarded.get("playground", {})
+
+    model_mode = playground.get("modelMode", "chat")
+    hitl = playground.get("humanInTheLoop", False)
+
+    logger.info(
+        f"[/chat] model_mode={model_mode}, hitl={hitl}, "
+        f"messages={len(input_data.get('messages', []))}"
+    )
+
+    # Create agent dynamically based on request options
+    base_agent = create_chat_agent(
+        model_mode=model_mode,
+        hitl=hitl,
+        mcp_tools=mcp_tool,
+    )
+
+    # Build config for this request
+    config = AgentConfig(
+        require_confirmation=hitl,
+    )
+
+    encoder = EventEncoder()
+
+    async def event_generator() -> AsyncGenerator[str]:
+        event_count = 0
+        try:
+            # Use run_agent_stream directly with shared pending_approvals
+            # so approval registry persists across initial request and resume
+            async for event in run_agent_stream(
+                input_data, base_agent, config,
+                pending_approvals=pending_approvals if hitl else None,
+            ):
+                event_count += 1
+                event_type_name = getattr(event, "type", type(event).__name__)
+                if "TOOL_CALL" in str(event_type_name) or "RUN" in str(event_type_name):
+                    logger.info(f"[/chat] Event {event_count}: {event_type_name}")
+
+                try:
+                    yield encoder.encode(event)
+                except Exception as encode_error:
+                    logger.exception("[/chat] Failed to encode event %s", event_type_name)
+                    from ag_ui.core import RunErrorEvent
+
+                    run_error = RunErrorEvent(
+                        message="Internal error while streaming events.",
+                        code=type(encode_error).__name__,
+                    )
+                    try:
+                        yield encoder.encode(run_error)
+                    except Exception:
+                        pass
+                    return
+
+            logger.info(f"[/chat] Completed streaming {event_count} events")
+        except Exception:
+            logger.exception("[/chat] Streaming failed")
+            from ag_ui.core import RunErrorEvent
+
+            run_error = RunErrorEvent(
+                message="Internal error while streaming events.",
+                code="StreamError",
+            )
+            try:
+                yield encoder.encode(run_error)
+            except Exception:
+                pass
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @app.get("/health")
 async def health():
     """Health check endpoint."""
     return {
         "status": "ok",
-        "agents": ["/chat", "/reasoning", "/state"],
+        "agents": ["/chat", "/state"],
         "models": {
-            "chat": os.environ.get("FOUNDRY_MODEL_CHAT", "gpt-4o-mini"),
-            "reasoning": os.environ.get("FOUNDRY_MODEL_REASONING", "o3-mini"),
+            "chat": os.environ.get("FOUNDRY_MODEL_CHAT", "gpt-4.1-mini"),
+            "reasoning": os.environ.get("FOUNDRY_MODEL_REASONING", "o4-mini"),
         },
+        "mcp_connected": mcp_tool is not None,
     }
 
 

@@ -1,4 +1,4 @@
-import type { FeatureToggles as Toggles, ModelMode } from "../types/ag-ui";
+import type { FeatureToggles as Toggles, ModelMode, ReasoningEffort } from "../types/ag-ui";
 
 interface Props {
   toggles: Toggles;
@@ -66,13 +66,45 @@ export default function FeatureToggles({ toggles, onChange, activeTab }: Props) 
             <div>
               <div className="text-sm font-medium text-white capitalize">{mode}</div>
               <div className="text-xs text-gray-500">
-                {mode === "chat" && "gpt-4o-mini — standard streaming"}
-                {mode === "reasoning" && "o3-mini — emits REASONING events"}
+                {mode === "chat" && "gpt-4.1-mini — standard streaming"}
+                {mode === "reasoning" && "o4-mini — reasoning with 🧠 token tracking"}
               </div>
             </div>
           </label>
         ))}
       </div>
+
+      {/* Reasoning Options (only when reasoning mode) */}
+      {toggles.modelMode === "reasoning" && (
+        <div className="mb-4">
+          <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-2">
+            Reasoning Options
+          </h2>
+          <div className="space-y-1">
+            <div className="p-3 rounded-lg">
+              <div className="text-xs font-medium text-white mb-2">Reasoning Effort</div>
+              <div className="flex gap-1">
+                {(["low", "medium", "high"] as ReasoningEffort[]).map((effort) => (
+                  <button
+                    key={effort}
+                    onClick={() => onChange({ ...toggles, reasoningEffort: effort })}
+                    className={`flex-1 px-2 py-1.5 rounded text-xs font-medium transition-colors ${
+                      toggles.reasoningEffort === effort
+                        ? "bg-orange-600 text-white"
+                        : "bg-gray-800 text-gray-400 hover:text-white hover:bg-gray-700"
+                    }`}
+                  >
+                    {effort}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[10px] text-gray-600 mt-1.5">
+                Controls reasoning depth via <code className="text-gray-500">reasoning_effort</code> API parameter
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">
         AG-UI Features
@@ -86,7 +118,7 @@ export default function FeatureToggles({ toggles, onChange, activeTab }: Props) 
         />
         <ToggleItem
           label="Tool Calls"
-          description="Backend tool execution with TOOL_CALL events"
+          description="Show tool call cards with arguments and results"
           enabled={toggles.toolCalls}
           onToggle={() => update("toolCalls")}
           disabled={activeTab === "state"}
@@ -143,6 +175,10 @@ export default function FeatureToggles({ toggles, onChange, activeTab }: Props) 
           <div className="flex items-center gap-2">
             <span className="w-3 h-3 rounded bg-orange-500"></span>
             <span className="text-gray-400">Reasoning</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="w-3 h-3 rounded bg-amber-500"></span>
+            <span className="text-gray-400">Approval / HITL</span>
           </div>
           <div className="flex items-center gap-2">
             <span className="w-3 h-3 rounded bg-red-500"></span>

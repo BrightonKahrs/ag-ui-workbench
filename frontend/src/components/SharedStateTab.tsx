@@ -212,6 +212,8 @@ export default function SharedStateTab({ onEvents }: Props) {
 
   const [input, setInput] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  // Buffer: keep last valid chart to avoid blanking during streaming updates
+  const [lastValidChart, setLastValidChart] = useState<ChartState | undefined>();
 
   // Forward events to inspector
   useEffect(() => {
@@ -230,20 +232,43 @@ export default function SharedStateTab({ onEvents }: Props) {
     setInput("");
   };
 
+  const handleClear = () => {
+    clearState();
+    setLastValidChart(undefined);
+  };
+
   // state.chart may be a JSON string (from predict_state streaming chart_json)
   // or an object (from STATE_SNAPSHOT after full parsing). Handle both.
   const rawChart = state.chart;
-  let chart: ChartState | undefined;
+  let currentChart: ChartState | undefined;
   if (typeof rawChart === "string") {
     try {
-      chart = JSON.parse(rawChart) as ChartState;
+      currentChart = JSON.parse(rawChart) as ChartState;
     } catch {
       // Partial JSON string still streaming — not renderable yet
-      chart = undefined;
+      currentChart = undefined;
     }
   } else if (rawChart && typeof rawChart === "object") {
-    chart = rawChart as ChartState;
+    currentChart = rawChart as ChartState;
   }
+
+  // Update last valid chart when we get a complete one
+  useEffect(() => {
+    if (currentChart && currentChart.data && currentChart.series) {
+      setLastValidChart(currentChart);
+    }
+  }, [currentChart]);
+
+  // Clear lastValidChart when STATE_SNAPSHOT explicitly has no chart
+  useEffect(() => {
+    if (!isRunning && state.chart === undefined && lastValidChart) {
+      setLastValidChart(undefined);
+    }
+  }, [state.chart, isRunning, lastValidChart]);
+
+  // Display: prefer current valid chart, fall back to buffered one
+  const displayChart = currentChart ?? lastValidChart;
+  const isStreamingChart = isRunning && !currentChart && !!lastValidChart;
 
   return (
     <div className="flex-1 flex flex-col">
@@ -326,7 +351,7 @@ export default function SharedStateTab({ onEvents }: Props) {
               </button>
               <button
                 type="button"
-                onClick={clearState}
+                onClick={handleClear}
                 className="px-2 py-1.5 bg-gray-800 text-gray-400 rounded-lg text-xs hover:text-white"
                 title="Reset chart"
               >
@@ -339,21 +364,26 @@ export default function SharedStateTab({ onEvents }: Props) {
         {/* Right: Chart Visualization */}
         <div className="flex-1 flex flex-col overflow-hidden">
           {/* Chart Header */}
-          {chart?.title && (
+          {displayChart?.title && (
             <div className="px-4 pt-3 pb-1">
-              <h2 className="text-sm font-semibold text-white">{chart.title}</h2>
+              <h2 className="text-sm font-semibold text-white">
+                {displayChart.title}
+                {isStreamingChart && (
+                  <span className="ml-2 text-[10px] text-purple-400 animate-pulse">● Updating...</span>
+                )}
+              </h2>
               <div className="flex items-center gap-2 mt-1">
                 <span className="text-[10px] bg-purple-950 text-purple-300 px-2 py-0.5 rounded uppercase">
-                  {chart.chart_type || "bar"}
+                  {displayChart.chart_type || "bar"}
                 </span>
-                {chart.stacked && (
+                {displayChart.stacked && (
                   <span className="text-[10px] bg-cyan-950 text-cyan-300 px-2 py-0.5 rounded">
                     stacked
                   </span>
                 )}
-                {chart.data && (
+                {displayChart.data && (
                   <span className="text-[10px] text-gray-600">
-                    {chart.data.length} points · {chart.series?.length || 0} series
+                    {displayChart.data.length} points · {displayChart.series?.length || 0} series
                   </span>
                 )}
               </div>
@@ -361,8 +391,8 @@ export default function SharedStateTab({ onEvents }: Props) {
           )}
 
           {/* Chart Area */}
-          <div className="flex-1 p-3 min-h-0">
-            {!chart ? (
+          <div className="flex-1 p-3 min-h-0 relative">
+            {!displayChart ? (
               <div className="flex items-center justify-center h-full text-gray-600">
                 <div className="text-center">
                   <div className="text-4xl mb-2">📈</div>
@@ -373,7 +403,17 @@ export default function SharedStateTab({ onEvents }: Props) {
                 </div>
               </div>
             ) : (
-              <ChartRenderer chart={chart} />
+              <>
+                <ChartRenderer chart={displayChart} />
+                {isStreamingChart && (
+                  <div className="absolute inset-0 bg-gray-900/30 flex items-center justify-center rounded pointer-events-none">
+                    <div className="bg-gray-800/90 px-3 py-1.5 rounded-full text-xs text-purple-300 flex items-center gap-2">
+                      <span className="animate-spin">⟳</span>
+                      Streaming new data...
+                    </div>
+                  </div>
+                )}
+              </>
             )}
           </div>
 

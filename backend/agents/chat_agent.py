@@ -7,24 +7,31 @@ from agent_framework import Agent, MCPStreamableHTTPTool
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import DefaultAzureCredential
 
-from tools.demo_tools import calculate, get_current_time, get_weather
+from tools.demo_tools import (
+    calculate,
+    calculate_hitl,
+    get_current_time,
+    get_current_time_hitl,
+    get_weather,
+    get_weather_hitl,
+)
 
 
 def create_chat_agent(
     model_mode: str = "chat",
+    hitl: bool = False,
     mcp_tools: Optional[MCPStreamableHTTPTool] = None,
 ) -> Agent:
     """Create a basic chat agent with demo tools and optional MCP tools.
 
     Args:
-        model_mode: One of "chat", "reasoning", or "hybrid".
-                    Determines which model deployment to use.
+        model_mode: One of "chat" or "reasoning".
+        hitl: If True, all tools require human approval before execution.
         mcp_tools: Optional MCPStreamableHTTPTool for connecting to local MCP server.
     """
     project_endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
     credential = DefaultAzureCredential()
 
-    # Select model based on mode
     if model_mode == "reasoning":
         model = os.environ.get("FOUNDRY_MODEL_REASONING", "o4-mini")
     else:
@@ -36,8 +43,12 @@ def create_chat_agent(
         credential=credential,
     )
 
-    # Build tool list: local tools + MCP tools
-    tools: list = [get_weather, calculate, get_current_time]
+    # Select tool versions based on HITL mode
+    if hitl:
+        tools: list = [get_weather_hitl, calculate_hitl, get_current_time_hitl]
+    else:
+        tools = [get_weather, calculate, get_current_time]
+
     if mcp_tools:
         tools.append(mcp_tools)
 
@@ -55,6 +66,14 @@ You also have access to MCP (Model Context Protocol) tools from a local MCP serv
 When users ask about data, knowledge, or statistics, use the MCP tools.
 This demonstrates MCP server integration in the AG-UI protocol."""
 
+    hitl_instruction = ""
+    if hitl:
+        hitl_instruction = """
+
+Note: Tool calls in this session have a human approval step built in.
+Go ahead and use tools normally when they are helpful — the system will
+handle the approval flow automatically."""
+
     agent = Agent(
         name="PlaygroundChatAgent",
         instructions=f"""You are a helpful assistant in the AG-UI Playground demo.
@@ -64,7 +83,7 @@ You have access to these local tools:
 - get_weather: Get current weather for a city (simulated data)
 - calculate: Evaluate math expressions
 - get_current_time: Get the current UTC time
-{mcp_instruction}
+{mcp_instruction}{hitl_instruction}
 
 When users ask questions that could use these tools, use them to demonstrate
 tool call events in the AG-UI protocol. Be conversational and explain what

@@ -2,7 +2,7 @@
  * useAgentStream - Core hook for AG-UI SSE communication
  *
  * Manages the connection to an AG-UI backend, tracks messages,
- * tool calls, and provides raw event capture for the inspector.
+ * tool calls, HITL approval, and provides raw event capture for the inspector.
  */
 
 import { useCallback, useRef, useState } from "react";
@@ -24,12 +24,23 @@ export interface ChatMessage {
   reasoningTokens?: number;
 }
 
+export type ToolCallStatus = "calling" | "awaiting_approval" | "complete" | "rejected" | "error";
+
 export interface ToolCall {
   id: string;
   name: string;
   args: string;
   result?: string;
-  status: "calling" | "complete";
+  status: ToolCallStatus;
+}
+
+/** Pending HITL approval info extracted from confirm_changes tool call */
+export interface PendingApproval {
+  confirmToolCallId: string;
+  functionName: string;
+  functionCallId: string;
+  functionArguments: Record<string, unknown>;
+  steps: Array<{ description: string; status: string }>;
 }
 
 interface UseAgentStreamReturn {
@@ -38,16 +49,18 @@ interface UseAgentStreamReturn {
   events: TimestampedEvent[];
   isRunning: boolean;
   error: string | null;
+  pendingApproval: PendingApproval | null;
   sendMessage: (content: string) => void;
+  respondToApproval: (approved: boolean) => void;
   clearMessages: () => void;
   clearEvents: () => void;
   cancelRun: () => void;
 }
 
-const MAX_EVENTS = 500; // Cap for performance
+const MAX_EVENTS = 500;
 
 export function useAgentStream(
-  endpoint: string,
+  _endpoint: string,
   toggles: FeatureToggles
 ): UseAgentStreamReturn {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -55,10 +68,15 @@ export function useAgentStream(
   const [events, setEvents] = useState<TimestampedEvent[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
   const eventCounterRef = useRef(0);
   const conversationRef = useRef<AGUIMessage[]>([]);
+  const threadIdRef = useRef<string | null>(null);
+  const pendingApprovalRef = useRef<PendingApproval | null>(null);
+  // Capture MESSAGES_SNAPSHOT for accurate resume
+  const messagesSnapshotRef = useRef<AGUIMessage[] | null>(null);
 
   const addEvent = useCallback((event: AGUIEvent) => {
     const timestamped: TimestampedEvent = {
@@ -68,52 +86,31 @@ export function useAgentStream(
     };
     setEvents((prev) => {
       const next = [...prev, timestamped];
-      // Cap event list for performance
       return next.length > MAX_EVENTS ? next.slice(-MAX_EVENTS) : next;
     });
   }, []);
 
-  const sendMessage = useCallback(
-    async (content: string) => {
-      if (isRunning) return;
+  /** Build the common forwardedProps for requests */
+  const buildForwardedProps = useCallback(() => ({
+    playground: {
+      toolCalls: toggles.toolCalls,
+      humanInTheLoop: toggles.humanInTheLoop,
+      modelMode: toggles.modelMode,
+      reasoningEffort: toggles.reasoningEffort,
+    },
+  }), [toggles]);
 
-      setError(null);
-      setIsRunning(true);
-
-      // Add user message
-      const userMsg: ChatMessage = {
-        id: `msg-${Date.now()}`,
-        role: "user",
-        content,
-      };
-      setMessages((prev) => [...prev, userMsg]);
-
-      // Track conversation history
-      conversationRef.current.push({ role: "user", content });
-
-      // Prepare request
-      const request: AGUIRunRequest = {
-        messages: conversationRef.current,
-        forwardedProps: {
-          playground: {
-            toolCalls: toggles.toolCalls,
-            humanInTheLoop: toggles.humanInTheLoop,
-          },
-        },
-      };
-
-      // Set up abort controller
+  /** Core streaming function used by both sendMessage and respondToApproval */
+  const runStream = useCallback(
+    async (request: AGUIRunRequest) => {
       const abortController = new AbortController();
       abortRef.current = abortController;
 
-      // Track current assistant message being streamed
       let currentMessageId: string | null = null;
       let currentContent = "";
-      let pendingReasoningTokens = 0; // Accumulate across the run
+      let pendingReasoningTokens = 0;
 
-      // Select endpoint based on model mode
-      const resolvedEndpoint = toggles.modelMode === "reasoning" ? "/reasoning" : endpoint;
-      const url = `/api${resolvedEndpoint}`;
+      const url = `/api/chat`;
 
       await streamAgentResponse(url, request, {
         signal: abortController.signal,
@@ -122,6 +119,14 @@ export function useAgentStream(
           addEvent(event);
 
           switch (event.type) {
+            case AGUIEventType.RUN_STARTED: {
+              // Persist threadId for resume requests
+              if (event.threadId) {
+                threadIdRef.current = event.threadId;
+              }
+              break;
+            }
+
             case AGUIEventType.TEXT_MESSAGE_START: {
               currentMessageId = event.messageId;
               currentContent = "";
@@ -157,7 +162,6 @@ export function useAgentStream(
                     : m
                 )
               );
-              // Add to conversation history
               if (currentContent) {
                 conversationRef.current.push({
                   role: "assistant",
@@ -191,7 +195,40 @@ export function useAgentStream(
             }
 
             case AGUIEventType.TOOL_CALL_END: {
-              // Tool call specification complete, waiting for result
+              // Check if this is a confirm_changes tool (HITL approval)
+              setToolCalls((prev) =>
+                prev.map((tc) => {
+                  if (tc.id !== event.toolCallId) return tc;
+                  if (tc.name === "confirm_changes") {
+                    // Parse confirm_changes args to extract approval details
+                    try {
+                      const args = JSON.parse(tc.args);
+                      const approval: PendingApproval = {
+                        confirmToolCallId: tc.id,
+                        functionName: args.function_name || "",
+                        functionCallId: args.function_call_id || "",
+                        functionArguments: args.function_arguments || {},
+                        steps: args.steps || [],
+                      };
+                      pendingApprovalRef.current = approval;
+                      setPendingApproval(approval);
+                    } catch {
+                      // If parsing fails, still mark as awaiting
+                      const approval: PendingApproval = {
+                        confirmToolCallId: tc.id,
+                        functionName: "unknown",
+                        functionCallId: "",
+                        functionArguments: {},
+                        steps: [],
+                      };
+                      pendingApprovalRef.current = approval;
+                      setPendingApproval(approval);
+                    }
+                    return { ...tc, status: "awaiting_approval" as ToolCallStatus };
+                  }
+                  return tc;
+                })
+              );
               break;
             }
 
@@ -206,18 +243,23 @@ export function useAgentStream(
               break;
             }
 
+            case AGUIEventType.MESSAGES_SNAPSHOT: {
+              // Capture for accurate resume
+              messagesSnapshotRef.current = event.messages as AGUIMessage[];
+              break;
+            }
+
             case AGUIEventType.RUN_ERROR: {
               setError(event.message);
               break;
             }
 
             case AGUIEventType.RUN_FINISHED: {
-              // Attach accumulated reasoning tokens to the last assistant message with content
+              // Attach accumulated reasoning tokens to last assistant message with content
               if (pendingReasoningTokens > 0) {
                 const tokens = pendingReasoningTokens;
                 pendingReasoningTokens = 0;
                 setMessages((prev) => {
-                  // Find the last assistant message that has content
                   const lastIdx = [...prev].reverse().findIndex(
                     (m) => m.role === "assistant" && m.content.length > 0
                   );
@@ -228,11 +270,17 @@ export function useAgentStream(
                   );
                 });
               }
+
+              // Check for interrupts (HITL waiting for approval)
+              const interrupts = (event as unknown as Record<string, unknown>).interrupt;
+              if (Array.isArray(interrupts) && interrupts.length > 0) {
+                // Don't mark run as finished — we're waiting for approval
+                return;
+              }
               break;
             }
 
             case AGUIEventType.CUSTOM: {
-              // Accumulate reasoning token usage from CUSTOM events
               if (event.name === "usage" && event.value && typeof event.value === "object") {
                 const usage = event.value as Record<string, unknown>;
                 const reasoningTokens = usage["openai.reasoning_tokens"] as number | undefined;
@@ -254,17 +302,108 @@ export function useAgentStream(
         },
 
         onComplete() {
-          setIsRunning(false);
+          // Only mark as not running if we're not waiting for approval
+          // Use ref to avoid stale closure
+          if (!pendingApprovalRef.current) {
+            setIsRunning(false);
+          }
         },
       });
     },
-    [isRunning, endpoint, toggles, addEvent]
+    [addEvent]
+  );
+
+  const sendMessage = useCallback(
+    async (content: string) => {
+      if (isRunning) return;
+
+      setError(null);
+      setIsRunning(true);
+
+      const userMsg: ChatMessage = {
+        id: `msg-${Date.now()}`,
+        role: "user",
+        content,
+      };
+      setMessages((prev) => [...prev, userMsg]);
+      conversationRef.current.push({ role: "user", content });
+
+      const request: AGUIRunRequest = {
+        messages: conversationRef.current,
+        threadId: threadIdRef.current || undefined,
+        forwardedProps: buildForwardedProps(),
+      };
+
+      await runStream(request);
+    },
+    [isRunning, buildForwardedProps, runStream]
+  );
+
+  const respondToApproval = useCallback(
+    async (approved: boolean) => {
+      if (!pendingApproval) return;
+
+      const approval = pendingApproval;
+      pendingApprovalRef.current = null;
+      setPendingApproval(null);
+
+      // Update tool call status
+      setToolCalls((prev) =>
+        prev.map((tc) =>
+          tc.id === approval.confirmToolCallId
+            ? { ...tc, status: approved ? "complete" : "rejected", result: approved ? "Approved" : "Rejected" }
+            : tc
+        )
+      );
+
+      // Also mark the original tool call
+      setToolCalls((prev) =>
+        prev.map((tc) =>
+          tc.id === approval.functionCallId
+            ? { ...tc, status: approved ? "complete" : "rejected", result: approved ? "Approved by user" : "Rejected by user" }
+            : tc
+        )
+      );
+
+      // Build resume request with interrupt response
+      // Use MESSAGES_SNAPSHOT if available, otherwise conversationRef
+      const msgs = messagesSnapshotRef.current || conversationRef.current;
+
+      const resumeValue = {
+        accepted: approved,
+        steps: approval.steps.map((s) => ({
+          ...s,
+          status: approved ? "enabled" : "disabled",
+        })),
+      };
+
+      const request: AGUIRunRequest = {
+        messages: msgs,
+        threadId: threadIdRef.current || undefined,
+        forwardedProps: buildForwardedProps(),
+        resume: {
+          interrupts: [
+            {
+              id: approval.confirmToolCallId,
+              value: resumeValue,
+            },
+          ],
+        } as unknown as Record<string, unknown>,
+      };
+
+      await runStream(request);
+    },
+    [pendingApproval, buildForwardedProps, runStream]
   );
 
   const clearMessages = useCallback(() => {
     setMessages([]);
     setToolCalls([]);
     conversationRef.current = [];
+    messagesSnapshotRef.current = null;
+    threadIdRef.current = null;
+    pendingApprovalRef.current = null;
+    setPendingApproval(null);
   }, []);
 
   const clearEvents = useCallback(() => {
@@ -274,6 +413,8 @@ export function useAgentStream(
   const cancelRun = useCallback(() => {
     abortRef.current?.abort();
     setIsRunning(false);
+    pendingApprovalRef.current = null;
+    setPendingApproval(null);
   }, []);
 
   return {
@@ -282,7 +423,9 @@ export function useAgentStream(
     events,
     isRunning,
     error,
+    pendingApproval,
     sendMessage,
+    respondToApproval,
     clearMessages,
     clearEvents,
     cancelRun,
