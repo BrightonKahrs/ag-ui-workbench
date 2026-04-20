@@ -230,7 +230,20 @@ export default function SharedStateTab({ onEvents }: Props) {
     setInput("");
   };
 
-  const chart = state.chart as ChartState | undefined;
+  // state.chart may be a JSON string (from predict_state streaming chart_json)
+  // or an object (from STATE_SNAPSHOT after full parsing). Handle both.
+  const rawChart = state.chart;
+  let chart: ChartState | undefined;
+  if (typeof rawChart === "string") {
+    try {
+      chart = JSON.parse(rawChart) as ChartState;
+    } catch {
+      // Partial JSON string still streaming — not renderable yet
+      chart = undefined;
+    }
+  } else if (rawChart && typeof rawChart === "object") {
+    chart = rawChart as ChartState;
+  }
 
   return (
     <div className="flex-1 flex flex-col">

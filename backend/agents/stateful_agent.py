@@ -11,80 +11,72 @@ from azure.identity import DefaultAzureCredential
 from pydantic import BaseModel, Field
 
 
-# --- State Models (Pydantic) ---
-# These define the EXACT schema the LLM must produce for the chart.
-# The frontend reads this shape from shared state to render Recharts components.
+# --- Pydantic models (used for validation, NOT as tool param types) ---
 
 
 class DataSeries(BaseModel):
-    """Metadata for one visual series on the chart."""
-    key: str = Field(..., description="Key in each DataPoint.values dict this series reads")
-    name: str = Field(..., description="Human-readable legend label")
-    color: str = Field(..., description="Hex color, e.g. '#8884d8'")
+    key: str
+    name: str
+    color: str
 
 
 class DataPoint(BaseModel):
-    """A single data point (one bar group / one x-tick / one pie slice)."""
-    label: str = Field(..., description="Category or x-axis label, e.g. 'Jan', 'Product A'")
-    values: dict[str, float] = Field(
-        ...,
-        description="Named numeric values keyed by series key. E.g. {'revenue': 42, 'cost': 31}",
-    )
+    label: str
+    values: dict[str, float]
 
 
 class ChartConfig(BaseModel):
-    """Complete chart configuration — this IS the shared state object."""
-    title: str = Field(..., description="Chart title displayed above the chart")
-    chart_type: str = Field(
-        default="bar",
-        description="One of: bar, line, area, pie, scatter, composed",
-    )
-    x_label: str = Field(default="", description="X-axis label")
-    y_label: str = Field(default="", description="Y-axis label")
-    series: list[DataSeries] = Field(..., description="Series definitions (at least one)")
-    data: list[DataPoint] = Field(..., description="Data points to plot (at least one)")
-    show_legend: bool = Field(default=True, description="Whether to show the legend")
-    show_grid: bool = Field(default=True, description="Whether to show grid lines")
-    stacked: bool = Field(default=False, description="Whether bar/area charts should stack")
+    title: str
+    chart_type: str = "bar"
+    x_label: str = ""
+    y_label: str = ""
+    series: list[DataSeries]
+    data: list[DataPoint]
+    show_legend: bool = True
+    show_grid: bool = True
+    stacked: bool = False
 
 
 # --- Tools ---
-
-
-def _coerce_chart(raw: dict | str | ChartConfig) -> ChartConfig:
-    """Safely coerce whatever the framework hands us into a ChartConfig."""
-    if isinstance(raw, ChartConfig):
-        return raw
-    if isinstance(raw, str):
-        raw = json.loads(raw)
-    return ChartConfig.model_validate(raw)
+# IMPORTANT: The @tool decorator cannot handle `dict` params with complex nested
+# structures — the framework's argument parser chokes on them. Instead, accept
+# the chart as a JSON **string** so the framework only needs to pass a string,
+# and we parse + validate it ourselves with Pydantic.
 
 
 @tool
-def set_chart(chart: dict) -> str:
+def set_chart(chart_json: str) -> str:
     """Set the entire chart configuration. Use this to create or replace a visualization.
 
-    The `chart` argument must match this schema:
+    Pass a JSON STRING with this structure:
     {
-        "title": str,
-        "chart_type": "bar" | "line" | "area" | "pie" | "scatter" | "composed",
-        "series": [{"key": str, "name": str, "color": str (hex)}, ...],
-        "data": [{"label": str, "values": {"<series_key>": number, ...}}, ...],
-        "x_label"?: str,
-        "y_label"?: str,
-        "show_legend"?: bool (default true),
-        "show_grid"?: bool (default true),
-        "stacked"?: bool (default false)
+        "title": "My Chart",
+        "chart_type": "bar",
+        "series": [{"key": "revenue", "name": "Revenue", "color": "#8884d8"}],
+        "data": [{"label": "Jan", "values": {"revenue": 42}}],
+        "x_label": "Month",
+        "y_label": "USD",
+        "show_legend": true,
+        "show_grid": true,
+        "stacked": false
     }
 
+    Required keys: title, series, data.
+    Optional keys: chart_type (default "bar"), x_label, y_label, show_legend, show_grid, stacked.
+    chart_type must be one of: bar, line, area, pie, scatter, composed.
+
     Args:
-        chart: Complete chart configuration dict.
+        chart_json: A JSON string containing the complete chart configuration.
 
     Returns:
         Confirmation message.
     """
-    config = _coerce_chart(chart)
-    return f"Chart set: '{config.title}' ({config.chart_type}) — {len(config.data)} points, {len(config.series)} series."
+    try:
+        raw = json.loads(chart_json) if isinstance(chart_json, str) else chart_json
+        config = ChartConfig.model_validate(raw)
+        return f"Chart set: '{config.title}' ({config.chart_type}) — {len(config.data)} points, {len(config.series)} series."
+    except Exception as e:
+        return f"Error parsing chart: {e}. Please send a valid JSON string."
 
 
 @tool
@@ -150,22 +142,21 @@ def create_stateful_agent() -> AgentFrameworkAgent:
 You create and modify interactive charts using shared state. The frontend renders
 a Recharts component directly from the state you produce via set_chart.
 
-WORKFLOW — always call set_chart with a COMPLETE chart dict:
-1. You receive the current chart state (if any) in the system context
-2. To create or replace a visualization, call `set_chart` with the full chart dict
-3. To change only styling (type, title, labels, legend, grid, stacked), use `update_chart_style`
-4. When modifying, include ALL existing data + your additions in set_chart
-5. After calling a tool, give a brief 1-2 sentence summary of what you did
+CRITICAL RULES:
+1. The set_chart tool takes a SINGLE argument called chart_json which is a JSON STRING.
+2. You MUST pass a valid JSON string, NOT a raw object. Wrap the entire chart config in a string.
+3. After calling a tool, give a brief 1-2 sentence summary of what you did.
+4. To change only styling, use update_chart_style (it takes simple scalar args).
 
 CHART TYPES: bar, line, area, pie, scatter, composed
 
-COLOR PALETTE (use for attractive charts):
+COLOR PALETTE:
 #8884d8 (purple), #82ca9d (green), #ffc658 (gold), #ff7c7c (coral),
 #00a4ef (blue), #a2aaad (silver), #4285f4 (google blue), #ff9900 (orange),
 #36cfc9 (teal), #f759ab (pink)
 
-When the user asks for sample data, generate realistic data directly in the set_chart call.
-Keep responses concise.""",
+When asked for sample data, generate realistic data directly in the set_chart call.
+Keep responses concise — 1-2 sentences after each tool call.""",
         client=chat_client,
         tools=[set_chart, update_chart_style],
     )
@@ -178,101 +169,7 @@ Keep responses concise.""",
             "chart": {"type": "object", "description": "The current chart configuration"},
         },
         predict_state_config={
-            "chart": {"tool": "set_chart", "tool_argument": "chart"},
-        },
-    )
-
-    return stateful_agent
-
-
-# --- Tools ---
-
-
-@tool
-def set_chart(chart: dict) -> str:
-    """Set the entire chart configuration. Use this when creating or replacing a visualization.
-
-    The chart dict MUST include these keys:
-    - title (str): Chart title
-    - chart_type (str): One of bar, line, area, pie, scatter, composed
-    - series (list): List of series objects, each with: key, name, color
-    - data (list): List of data points, each with: label, values (dict of name→number)
-
-    Optional keys: x_label, y_label, show_legend, show_grid, stacked
-
-    Example:
-    {
-        "title": "Revenue",
-        "chart_type": "bar",
-        "series": [{"key": "revenue", "name": "Revenue", "color": "#8884d8"}],
-        "data": [{"label": "Jan", "values": {"revenue": 42}}]
-    }
-
-    Args:
-        chart: Complete chart configuration dict.
-
-    Returns:
-        Confirmation message.
-    """
-    # Handle case where framework passes a JSON string instead of dict
-    if isinstance(chart, str):
-        chart = json.loads(chart)
-    title = chart.get("title", "Untitled")
-    data = chart.get("data", [])
-    series = chart.get("series", [])
-    return f"Chart set: '{title}' with {len(data)} data points and {len(series)} series."
-
-
-# --- Agent Creation ---
-
-
-def create_stateful_agent() -> AgentFrameworkAgent:
-    """Create a stateful agent for data visualization with shared state management."""
-    project_endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
-    model = os.environ.get("FOUNDRY_MODEL_CHAT", "gpt-4.1-mini")
-    credential = DefaultAzureCredential()
-
-    chat_client = FoundryChatClient(
-        project_endpoint=project_endpoint,
-        model=model,
-        credential=credential,
-    )
-
-    base_agent = Agent(
-        name="DataVizAgent",
-        instructions="""You are a data visualization assistant in the AG-UI Playground.
-You create and modify interactive charts using shared state. The frontend renders
-a Recharts component directly from the state you produce via set_chart.
-
-WORKFLOW — always call set_chart with a COMPLETE chart dict:
-1. You receive the current chart state (if any) in the system context
-2. To create or replace a visualization, call `set_chart` with the full chart dict
-3. To change only styling (type, title, labels, legend, grid, stacked), use `update_chart_style`
-4. When modifying, include ALL existing data + your additions in set_chart
-5. After calling a tool, give a brief 1-2 sentence summary of what you did
-
-CHART TYPES: bar, line, area, pie, scatter, composed
-
-COLOR PALETTE (use for attractive charts):
-#8884d8 (purple), #82ca9d (green), #ffc658 (gold), #ff7c7c (coral),
-#00a4ef (blue), #a2aaad (silver), #4285f4 (google blue), #ff9900 (orange),
-#36cfc9 (teal), #f759ab (pink)
-
-When the user asks for sample data, generate realistic data directly in the set_chart call.
-Keep responses concise.""",
-        client=chat_client,
-        tools=[set_chart, update_chart_style],
-    )
-
-    stateful_agent = AgentFrameworkAgent(
-        agent=base_agent,
-        name="DataVizAgent",
-        description="Creates and modifies data visualizations with streaming state updates",
-        state_schema={
-            "chart": {"type": "object", "description": "The current chart configuration"},
-        },
-        predict_state_config={
-            "chart": {"tool": "set_chart", "tool_argument": "chart"},
+            "chart": {"tool": "set_chart", "tool_argument": "chart_json"},
         },
     )
 
