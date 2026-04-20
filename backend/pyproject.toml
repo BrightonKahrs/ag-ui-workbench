@@ -1,0 +1,18 @@
+[project]
+name = "ag-ui-playground"
+version = "0.1.0"
+description = "AG-UI Playground - Educational demo of AG-UI protocol with Microsoft Agent Framework"
+requires-python = ">=3.10"
+dependencies = [
+    "agent-framework-ag-ui",
+    "agent-framework-foundry",
+    "fastapi",
+    "uvicorn[standard]",
+    "azure-identity",
+    "aiohttp",
+    "pydantic>=2.0",
+    "python-dotenv",
+]
+
+[tool.uv]
+prerelease = "allow"
