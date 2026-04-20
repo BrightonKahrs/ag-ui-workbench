@@ -16,6 +16,7 @@ export default function ChatTab({ toggles, onEvents }: Props) {
     error,
     sendMessage,
     clearMessages,
+    clearEvents,
     cancelRun,
   } = useAgentStream("/chat", toggles);
 
@@ -61,7 +62,9 @@ export default function ChatTab({ toggles, onEvents }: Props) {
           </div>
         )}
 
-        {messages.map((msg) => (
+        {messages
+          .filter((msg) => msg.role === "user" || msg.content || msg.isStreaming)
+          .map((msg) => (
           <div
             key={msg.id}
             className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
@@ -153,7 +156,7 @@ export default function ChatTab({ toggles, onEvents }: Props) {
           )}
           <button
             type="button"
-            onClick={clearMessages}
+            onClick={() => { clearMessages(); clearEvents(); }}
             className="px-3 py-2 bg-gray-800 text-gray-400 rounded-lg text-sm hover:text-white hover:bg-gray-700"
           >
             Clear

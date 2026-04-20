@@ -208,7 +208,10 @@ export default function EventInspector({ events }: Props) {
   const [autoScroll, setAutoScroll] = useState(true);
   const [filter, setFilter] = useState<string>("");
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [fullyExpandedGroups, setFullyExpandedGroups] = useState<Set<string>>(new Set());
   const [expandedEvents, setExpandedEvents] = useState<Set<string>>(new Set());
+
+  const MAX_VISIBLE_CHILDREN = 5;
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -233,8 +236,17 @@ export default function EventInspector({ events }: Props) {
   const toggleGroup = (id: string) => {
     setExpandedGroups((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      if (next.has(id)) {
+        next.delete(id);
+        // Also reset "show all" when collapsing
+        setFullyExpandedGroups((fp) => {
+          const nfp = new Set(fp);
+          nfp.delete(id);
+          return nfp;
+        });
+      } else {
+        next.add(id);
+      }
       return next;
     });
   };
@@ -351,10 +363,32 @@ export default function EventInspector({ events }: Props) {
                     </span>
                   </div>
                 </div>
-                {/* Expanded children */}
+                {/* Expanded children — capped unless fully expanded */}
                 {isExpanded && (
                   <div className="space-y-0.5">
-                    {group.events.map((te) => renderEvent(te, true))}
+                    {(() => {
+                      const isFullyExpanded = fullyExpandedGroups.has(group.id);
+                      const visibleEvents = isFullyExpanded
+                        ? group.events
+                        : group.events.slice(0, MAX_VISIBLE_CHILDREN);
+                      const hiddenCount = group.events.length - MAX_VISIBLE_CHILDREN;
+                      return (
+                        <>
+                          {visibleEvents.map((te) => renderEvent(te, true))}
+                          {!isFullyExpanded && hiddenCount > 0 && (
+                            <button
+                              className="ml-3 text-[10px] text-gray-500 hover:text-gray-300 py-1 px-2 rounded bg-gray-800/50 hover:bg-gray-800 transition-colors"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setFullyExpandedGroups((prev) => new Set([...prev, group.id]));
+                              }}
+                            >
+                              Show all {group.events.length} events (+{hiddenCount} more)
+                            </button>
+                          )}
+                        </>
+                      );
+                    })()}
                   </div>
                 )}
               </div>
