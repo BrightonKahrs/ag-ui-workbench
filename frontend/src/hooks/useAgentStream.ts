@@ -150,25 +150,13 @@ export function useAgentStream(
             }
 
             case AGUIEventType.TEXT_MESSAGE_END: {
-              // Attach any accumulated reasoning tokens to this message
-              const msgEndId = event.messageId;
-              if (pendingReasoningTokens > 0) {
-                const tokens = pendingReasoningTokens;
-                setMessages((prev) =>
-                  prev.map((m) =>
-                    m.id === msgEndId ? { ...m, isStreaming: false, reasoningTokens: tokens } : m
-                  )
-                );
-                pendingReasoningTokens = 0;
-              } else {
-                setMessages((prev) =>
-                  prev.map((m) =>
-                    m.id === event.messageId
-                      ? { ...m, isStreaming: false }
-                      : m
-                  )
-                );
-              }
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === event.messageId
+                    ? { ...m, isStreaming: false }
+                    : m
+                )
+              );
               // Add to conversation history
               if (currentContent) {
                 conversationRef.current.push({
@@ -220,6 +208,26 @@ export function useAgentStream(
 
             case AGUIEventType.RUN_ERROR: {
               setError(event.message);
+              break;
+            }
+
+            case AGUIEventType.RUN_FINISHED: {
+              // Attach accumulated reasoning tokens to the last assistant message with content
+              if (pendingReasoningTokens > 0) {
+                const tokens = pendingReasoningTokens;
+                pendingReasoningTokens = 0;
+                setMessages((prev) => {
+                  // Find the last assistant message that has content
+                  const lastIdx = [...prev].reverse().findIndex(
+                    (m) => m.role === "assistant" && m.content.length > 0
+                  );
+                  if (lastIdx === -1) return prev;
+                  const actualIdx = prev.length - 1 - lastIdx;
+                  return prev.map((m, i) =>
+                    i === actualIdx ? { ...m, reasoningTokens: tokens } : m
+                  );
+                });
+              }
               break;
             }
 
