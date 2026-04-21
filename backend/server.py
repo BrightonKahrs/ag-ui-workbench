@@ -23,20 +23,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
-from ag_ui.core import (
-    StateDeltaEvent,
-    StateSnapshotEvent,
-    ToolCallArgsEvent,
-    ToolCallEndEvent,
-    ToolCallStartEvent,
-)
+from ag_ui.core import StateDeltaEvent, StateSnapshotEvent
 from ag_ui.encoder import EventEncoder
 from agent_framework import MCPStreamableHTTPTool
 from agent_framework_ag_ui._agent import AgentConfig
 from agent_framework_ag_ui._agent_run import run_agent_stream
 from agent_framework_ag_ui._types import AGUIRequest
 from agents.chat_agent import create_chat_agent
-from agents.stateful_agent import ChartConfig, create_stateful_agent
+from agents.stateful_agent import create_stateful_agent
 
 load_dotenv()
 
@@ -94,12 +88,8 @@ async def state_diff_stream(
 ) -> AsyncGenerator:
     """Middleware that converts STATE_SNAPSHOT → STATE_DELTA when the diff is smaller.
 
-    Also handles patch_chart tool calls: intercepts the tool's JSON Patch args,
-    applies them to the shadow state, validates with Pydantic, and emits a
-    granular STATE_DELTA — avoiding the LLM needing to regenerate the full chart.
-
     Shadow state is seeded from the request's state (canonical) and ONLY updated
-    from STATE_SNAPSHOT events (or patch_chart applications).
+    from STATE_SNAPSHOT events.
 
     When smart deltas is ON and we already have state (not the first chart):
     - Predictive STATE_DELTAs (framework's full /key replaces during streaming)
@@ -119,52 +109,7 @@ async def state_diff_stream(
     # to avoid sending the full chart twice (once predictive, once as delta)
     suppress_predictive = use_smart_delta and bool(shadow)
 
-    # --- patch_chart tracking ---
-    active_patch_call_id: str | None = None  # tool_call_id when patch_chart is active
-    patch_args_buffer: str = ""  # accumulated arg chunks
-    patch_applied_this_run: bool = False  # True if patch_chart was successfully applied
-
     async for event in events_gen:
-        # --- Track patch_chart tool calls ---
-        if isinstance(event, ToolCallStartEvent):
-            if getattr(event, "tool_call_name", "") == "patch_chart":
-                active_patch_call_id = event.tool_call_id
-                patch_args_buffer = ""
-                logger.info(f"[state-diff] patch_chart started: {event.tool_call_id}")
-            yield event
-            continue
-
-        if isinstance(event, ToolCallArgsEvent) and active_patch_call_id:
-            if event.tool_call_id == active_patch_call_id:
-                patch_args_buffer += event.delta or ""
-            yield event
-            continue
-
-        if isinstance(event, ToolCallEndEvent) and active_patch_call_id:
-            if event.tool_call_id == active_patch_call_id:
-                # Tool args are complete — apply the patch to shadow state
-                yield event  # yield ToolCallEndEvent first
-                try:
-                    applied = _apply_patch_chart(
-                        patch_args_buffer, shadow, thread_id
-                    )
-                    if applied is not None:
-                        delta_ops, new_shadow = applied
-                        shadow = new_shadow
-                        patch_applied_this_run = True
-                        yield StateDeltaEvent(delta=delta_ops)
-                        logger.info(
-                            f"[state-diff] patch_chart applied: "
-                            f"{len(delta_ops)} ops emitted as STATE_DELTA"
-                        )
-                except Exception as e:
-                    logger.warning(f"[state-diff] patch_chart failed: {e}")
-                active_patch_call_id = None
-                continue
-            yield event
-            continue
-
-        # --- Existing STATE_DELTA / STATE_SNAPSHOT handling ---
         if isinstance(event, StateDeltaEvent):
             if suppress_predictive:
                 logger.debug("[state-diff] Suppressing predictive STATE_DELTA")
@@ -173,16 +118,6 @@ async def state_diff_stream(
 
         elif isinstance(event, StateSnapshotEvent):
             normalized = _normalize_state(event.snapshot)
-
-            # If patch_chart was applied this run, the framework's snapshot has
-            # the OLD state (no predict_state_config for patch_chart). Override
-            # with our shadow which has the patched chart.
-            if patch_applied_this_run and shadow:
-                if normalized.get("chart") != shadow.get("chart"):
-                    logger.info(
-                        "[state-diff] Overriding stale snapshot with patched shadow"
-                    )
-                    normalized = copy.deepcopy(shadow)
 
             if use_smart_delta and shadow:
                 try:
@@ -223,68 +158,6 @@ async def state_diff_stream(
 
         else:
             yield event
-
-
-def _apply_patch_chart(
-    raw_args: str,
-    shadow: dict[str, Any],
-    thread_id: str,
-) -> tuple[list[dict], dict[str, Any]] | None:
-    """Parse patch_chart args, apply to shadow, validate result.
-
-    Returns (state_delta_ops, new_shadow) on success, None on failure.
-    The delta ops have paths prefixed with /chart for the state-level delta.
-    """
-    if "chart" not in shadow:
-        logger.warning("[state-diff] patch_chart: no chart in shadow state")
-        return None
-
-    # Parse the accumulated tool args JSON: {"patches_json": "[...]"}
-    try:
-        args = json.loads(raw_args)
-    except json.JSONDecodeError:
-        logger.warning(f"[state-diff] patch_chart: failed to parse args: {raw_args[:200]}")
-        return None
-
-    patches_str = args.get("patches_json", raw_args)
-    try:
-        patches = json.loads(patches_str) if isinstance(patches_str, str) else patches_str
-    except json.JSONDecodeError:
-        logger.warning(f"[state-diff] patch_chart: failed to parse patches_json")
-        return None
-
-    if not isinstance(patches, list):
-        return None
-
-    # Apply patches to a copy of the chart
-    chart_copy = copy.deepcopy(shadow["chart"])
-    try:
-        patched_chart = jsonpatch.apply_patch(chart_copy, patches)
-    except Exception as e:
-        logger.warning(f"[state-diff] patch_chart: patch apply failed: {e}")
-        return None
-
-    # Validate with Pydantic — ensures the patched chart is still valid
-    try:
-        ChartConfig.model_validate(patched_chart)
-    except Exception as e:
-        logger.warning(f"[state-diff] patch_chart: validation failed: {e}")
-        return None
-
-    # Build state-level delta ops (prefix paths with /chart)
-    state_ops = []
-    for p in patches:
-        state_op = dict(p)
-        state_op["path"] = f"/chart{p['path']}"
-        state_ops.append(state_op)
-
-    # Update shadow and thread cache
-    new_shadow = copy.deepcopy(shadow)
-    new_shadow["chart"] = patched_chart
-    _thread_states[thread_id] = copy.deepcopy(new_shadow)
-    _evict_thread_cache()
-
-    return state_ops, new_shadow
 
 
 @asynccontextmanager
