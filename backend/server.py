@@ -346,6 +346,16 @@ async def stateful_endpoint(request_body: AGUIRequest) -> StreamingResponse:
         if "chart" in normalized and isinstance(normalized["chart"], dict):
             state_store.store_chart(normalized["chart"], thread_id)
 
+    # WORKAROUND: Framework bug — PredictiveStateHandler.__init__ does
+    # `self.current_state = current_state or {}` which creates a DETACHED dict
+    # when current_state is empty (falsy). This breaks the reference to
+    # flow.current_state, so apply_pending_updates() never updates the flow,
+    # and StateSnapshotEvent is never emitted after tool completion.
+    # Fix: ensure input_data["state"] is non-empty so flow.current_state starts
+    # truthy and the reference is preserved.
+    if not input_data.get("state"):
+        input_data["state"] = {"chart": None}
+
     # Create a fresh stateful agent per request
     stateful_agent_wrapper = create_stateful_agent()
     base_agent = stateful_agent_wrapper.agent
