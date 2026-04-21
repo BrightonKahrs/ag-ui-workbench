@@ -23,7 +23,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
-from ag_ui.core import StateDeltaEvent, StateSnapshotEvent
+from ag_ui.core import (
+    StateDeltaEvent,
+    StateSnapshotEvent,
+    ToolCallResultEvent,
+    ToolCallStartEvent,
+)
 from ag_ui.encoder import EventEncoder
 from agent_framework import MCPStreamableHTTPTool
 from agent_framework_ag_ui._agent import AgentConfig
@@ -31,6 +36,8 @@ from agent_framework_ag_ui._agent_run import run_agent_stream
 from agent_framework_ag_ui._types import AGUIRequest
 from agents.chat_agent import create_chat_agent
 from agents.stateful_agent import create_stateful_agent
+
+import state_store
 
 load_dotenv()
 
@@ -43,16 +50,6 @@ mcp_tool: MCPStreamableHTTPTool | None = None
 pending_approvals: OrderedDict[str, str] = OrderedDict()
 
 # --- State Diff Middleware ---
-# Per-thread state cache for computing deltas across runs
-_thread_states: dict[str, dict[str, Any]] = {}
-_MAX_THREAD_CACHE = 100  # Evict oldest threads when cache exceeds this
-
-
-def _evict_thread_cache() -> None:
-    """Simple eviction: remove oldest entries when cache is too large."""
-    while len(_thread_states) > _MAX_THREAD_CACHE:
-        oldest = next(iter(_thread_states))
-        del _thread_states[oldest]
 
 
 def _normalize_state(state: dict[str, Any]) -> dict[str, Any]:
@@ -86,37 +83,87 @@ async def state_diff_stream(
     request_state: dict[str, Any] | None = None,
     use_smart_delta: bool = True,
 ) -> AsyncGenerator:
-    """Middleware that converts STATE_SNAPSHOT → STATE_DELTA when the diff is smaller.
+    """Middleware that converts STATE_SNAPSHOT → STATE_DELTA and handles patch_chart.
 
-    Shadow state is seeded from the request's state (canonical) and ONLY updated
-    from STATE_SNAPSHOT events.
+    Two responsibilities:
+    1. Smart deltas: convert STATE_SNAPSHOT to granular JSON Patch STATE_DELTA
+       when the diff is smaller than the full snapshot.
+    2. patch_chart support: after a patch_chart tool completes, read the patched
+       state from state_store and emit STATE_DELTA/SNAPSHOT. Suppress the framework's
+       stale StateSnapshotEvent that follows (flow.current_state wasn't updated
+       because patch_chart has no predict_state_config mapping).
 
-    When smart deltas is ON and we already have state (not the first chart):
-    - Predictive STATE_DELTAs (framework's full /key replaces during streaming)
-      are SUPPRESSED — the chart stays stable at the current version.
-    - STATE_SNAPSHOT is converted to a granular STATE_DELTA with only the changed
-      fields (e.g., /chart/series/0/color instead of replacing the entire /chart).
-
-    When smart deltas is OFF or this is the first chart (no shadow):
-    - All events pass through unchanged — full predictive streaming experience.
+    Shadow state is seeded from request state, then updated from state_store
+    and framework STATE_SNAPSHOT events.
     """
-    # Seed shadow from the canonical client state, with thread cache as fallback
+    # Seed shadow from request state or state_store
     shadow = _normalize_state(copy.deepcopy(request_state)) if request_state else {}
-    if not shadow and thread_id in _thread_states:
-        shadow = copy.deepcopy(_thread_states[thread_id])
+    if not shadow:
+        stored = state_store.get_full_state(thread_id)
+        if stored:
+            shadow = stored
 
-    # When we have prior state + smart deltas, suppress predictive streaming
-    # to avoid sending the full chart twice (once predictive, once as delta)
+    # When we have prior state + smart deltas, suppress predictive STATE_DELTAs
+    # (framework's full /key replaces during set_chart streaming)
     suppress_predictive = use_smart_delta and bool(shadow)
 
+    # Track patch_chart tool calls
+    active_patch_call_id: str | None = None
+    suppress_next_snapshot = False
+
     async for event in events_gen:
+        # --- Track tool call names ---
+        if isinstance(event, ToolCallStartEvent):
+            if event.toolCallName == "patch_chart":
+                active_patch_call_id = event.toolCallId
+                logger.info(f"[state-diff] patch_chart started: {event.toolCallId}")
+            yield event
+            continue
+
+        # --- After tool result: emit state from store for patch_chart ---
+        if isinstance(event, ToolCallResultEvent):
+            yield event
+            if active_patch_call_id and event.toolCallId == active_patch_call_id:
+                # patch_chart completed — read patched state from store
+                patched_state = state_store.get_full_state(thread_id)
+                if patched_state and patched_state != shadow:
+                    if use_smart_delta and shadow:
+                        try:
+                            patch = jsonpatch.make_patch(shadow, patched_state)
+                            ops = list(patch)
+                            if ops:
+                                logger.info(
+                                    f"[state-diff] patch_chart: emitting {len(ops)} "
+                                    f"delta ops from state_store"
+                                )
+                                yield StateDeltaEvent(delta=ops)
+                        except Exception:
+                            yield StateSnapshotEvent(snapshot=patched_state)
+                    else:
+                        yield StateSnapshotEvent(snapshot=patched_state)
+                    shadow = copy.deepcopy(patched_state)
+                suppress_next_snapshot = True
+                active_patch_call_id = None
+            else:
+                # Non-patch tool result: don't suppress next snapshot
+                suppress_next_snapshot = False
+            continue
+
+        # --- Handle STATE_DELTA (predictive streaming from set_chart) ---
         if isinstance(event, StateDeltaEvent):
             if suppress_predictive:
                 logger.debug("[state-diff] Suppressing predictive STATE_DELTA")
                 continue
             yield event
 
+        # --- Handle STATE_SNAPSHOT ---
         elif isinstance(event, StateSnapshotEvent):
+            if suppress_next_snapshot:
+                # Framework emitted stale snapshot after patch_chart — skip it
+                logger.debug("[state-diff] Suppressing stale post-patch_chart snapshot")
+                suppress_next_snapshot = False
+                continue
+
             normalized = _normalize_state(event.snapshot)
 
             if use_smart_delta and shadow:
@@ -125,7 +172,6 @@ async def state_diff_stream(
                     ops = list(patch)
 
                     if not ops:
-                        # Shadow matches snapshot — suppress redundant snapshot
                         logger.debug("[state-diff] Suppressing no-op snapshot")
                         continue
 
@@ -142,19 +188,21 @@ async def state_diff_stream(
                         )
                         yield StateDeltaEvent(delta=ops)
                         shadow = copy.deepcopy(normalized)
-                        _thread_states[thread_id] = copy.deepcopy(normalized)
-                        _evict_thread_cache()
+                        # Sync state_store from framework snapshot
+                        if "chart" in normalized:
+                            state_store.store_chart(normalized["chart"], thread_id)
                         continue
                 except Exception as e:
                     logger.warning(
                         f"[state-diff] Diff failed, passing snapshot through: {e}"
                     )
 
-            # Emit normalized snapshot (parsed JSON strings → objects)
+            # Emit normalized snapshot
             yield StateSnapshotEvent(snapshot=normalized)
             shadow = copy.deepcopy(normalized)
-            _thread_states[thread_id] = copy.deepcopy(normalized)
-            _evict_thread_cache()
+            # Sync state_store from framework snapshot
+            if "chart" in normalized:
+                state_store.store_chart(normalized["chart"], thread_id)
 
         else:
             yield event
@@ -272,7 +320,7 @@ async def dynamic_chat_endpoint(request_body: AGUIRequest) -> StreamingResponse:
 
 @app.post("/state", tags=["AG-UI"])
 async def stateful_endpoint(request_body: AGUIRequest) -> StreamingResponse:
-    """Shared state endpoint with smart delta middleware.
+    """Shared state endpoint with smart delta middleware and patch_chart support.
 
     Reads forwardedProps.playground.smartDelta to toggle STATE_SNAPSHOT → STATE_DELTA
     conversion. When enabled, small state changes are sent as JSON Patch operations
@@ -292,17 +340,24 @@ async def stateful_endpoint(request_body: AGUIRequest) -> StreamingResponse:
         f"messages={len(input_data.get('messages', []))}"
     )
 
+    # Seed state_store from client state so patch_chart can read it
+    if request_state:
+        normalized = _normalize_state(copy.deepcopy(request_state))
+        if "chart" in normalized and isinstance(normalized["chart"], dict):
+            state_store.store_chart(normalized["chart"], thread_id)
+
     # Create a fresh stateful agent per request
     stateful_agent_wrapper = create_stateful_agent()
     base_agent = stateful_agent_wrapper.agent
     config = AgentConfig(
-        state_schema=stateful_agent_wrapper.config.state_schema,
         predict_state_config=stateful_agent_wrapper.config.predict_state_config,
     )
 
     encoder = EventEncoder()
 
     async def event_generator() -> AsyncGenerator[str]:
+        # Set active thread for tool functions (patch_chart, get_chart_info)
+        token = state_store.set_active_thread(thread_id)
         event_count = 0
         raw_events = run_agent_stream(input_data, base_agent, config)
 
