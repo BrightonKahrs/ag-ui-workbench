@@ -5,6 +5,7 @@ from typing import Optional
 
 from agent_framework import Agent, MCPStreamableHTTPTool
 from agent_framework.foundry import FoundryChatClient
+from agent_framework.openai import OpenAIChatOptions
 from azure.identity import DefaultAzureCredential
 
 from tools.demo_tools import (
@@ -21,6 +22,7 @@ def create_chat_agent(
     model_mode: str = "chat",
     hitl: bool = False,
     mcp_tools: Optional[MCPStreamableHTTPTool] = None,
+    reasoning_effort: str = "medium",
 ) -> Agent:
     """Create a basic chat agent with demo tools and optional MCP tools.
 
@@ -28,6 +30,7 @@ def create_chat_agent(
         model_mode: One of "chat" or "reasoning".
         hitl: If True, all tools require human approval before execution.
         mcp_tools: Optional MCPStreamableHTTPTool for connecting to local MCP server.
+        reasoning_effort: Reasoning effort level ("low", "medium", "high") for reasoning models.
     """
     project_endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
     credential = DefaultAzureCredential()
@@ -42,6 +45,17 @@ def create_chat_agent(
         model=model,
         credential=credential,
     )
+
+    # Configure reasoning options for reasoning models.
+    # Use include=["reasoning.encrypted_content"] to get reasoning content
+    # streamed back from the model, which the framework converts into
+    # REASONING_* AG-UI events for frontend display.
+    default_options: OpenAIChatOptions | None = None
+    if model_mode == "reasoning":
+        default_options = OpenAIChatOptions(
+            reasoning={"effort": reasoning_effort},
+            include=["reasoning.encrypted_content"],
+        )
 
     # Select tool versions based on HITL mode
     if hitl:
@@ -92,6 +106,7 @@ you're doing so users can see the protocol events in action.
 Keep responses concise but informative.""",
         client=chat_client,
         tools=tools,
+        default_options=default_options,
     )
 
     return agent

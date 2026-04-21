@@ -22,6 +22,8 @@ export interface ChatMessage {
   content: string;
   isStreaming?: boolean;
   reasoningTokens?: number;
+  reasoningContent?: string;
+  isReasoning?: boolean;
 }
 
 export type ToolCallStatus = "calling" | "awaiting_approval" | "complete" | "rejected" | "error";
@@ -109,6 +111,9 @@ export function useAgentStream(
       let currentMessageId: string | null = null;
       let currentContent = "";
       let pendingReasoningTokens = 0;
+      // Reasoning state: track messageId → accumulated text
+      let reasoningMessageId: string | null = null;
+      let reasoningContent = "";
 
       const url = `/api/chat`;
 
@@ -130,13 +135,40 @@ export function useAgentStream(
             case AGUIEventType.TEXT_MESSAGE_START: {
               currentMessageId = event.messageId;
               currentContent = "";
-              const assistantMsg: ChatMessage = {
-                id: event.messageId,
-                role: "assistant",
-                content: "",
-                isStreaming: true,
-              };
-              setMessages((prev) => [...prev, assistantMsg]);
+              // If there's a preceding reasoning-only message, merge it
+              // into this text message instead of creating a new one
+              setMessages((prev) => {
+                const lastIdx = prev.length - 1;
+                const last = lastIdx >= 0 ? prev[lastIdx] : null;
+                if (
+                  last &&
+                  last.role === "assistant" &&
+                  !last.content &&
+                  last.reasoningContent
+                ) {
+                  // Merge: update the reasoning placeholder to become the text message
+                  return prev.map((m, i) =>
+                    i === lastIdx
+                      ? {
+                          ...m,
+                          id: event.messageId,
+                          isStreaming: true,
+                          isReasoning: false,
+                        }
+                      : m
+                  );
+                }
+                // No preceding reasoning — create fresh assistant message
+                return [
+                  ...prev,
+                  {
+                    id: event.messageId,
+                    role: "assistant" as const,
+                    content: "",
+                    isStreaming: true,
+                  },
+                ];
+              });
               break;
             }
 
@@ -287,6 +319,54 @@ export function useAgentStream(
                 if (reasoningTokens && reasoningTokens > 0) {
                   pendingReasoningTokens += reasoningTokens;
                 }
+              }
+              break;
+            }
+
+            case AGUIEventType.REASONING_START: {
+              // Create a placeholder assistant message for reasoning
+              reasoningMessageId = event.messageId;
+              reasoningContent = "";
+              const reasoningMsg: ChatMessage = {
+                id: event.messageId,
+                role: "assistant",
+                content: "",
+                isReasoning: true,
+                reasoningContent: "",
+              };
+              setMessages((prev) => [...prev, reasoningMsg]);
+              break;
+            }
+
+            case AGUIEventType.REASONING_MESSAGE_CONTENT: {
+              if (event.messageId === reasoningMessageId) {
+                reasoningContent += event.delta;
+                const rc = reasoningContent;
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === event.messageId
+                      ? { ...m, reasoningContent: rc }
+                      : m
+                  )
+                );
+              }
+              break;
+            }
+
+            case AGUIEventType.REASONING_MESSAGE_END:
+            case AGUIEventType.REASONING_END: {
+              // Finalize reasoning — mark it as no longer actively reasoning
+              if (event.messageId === reasoningMessageId) {
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === event.messageId
+                      ? { ...m, isReasoning: false }
+                      : m
+                  )
+                );
+              }
+              if (event.type === AGUIEventType.REASONING_END) {
+                reasoningMessageId = null;
               }
               break;
             }

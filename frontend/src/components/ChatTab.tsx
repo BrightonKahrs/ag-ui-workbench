@@ -90,6 +90,30 @@ function ToolCallCard({ tc, toggles }: { tc: ToolCall; toggles: FeatureToggles }
   );
 }
 
+/** Collapsible reasoning block shown above assistant messages */
+function ReasoningBlock({ content, isActive }: { content: string; isActive: boolean }) {
+  const [expanded, setExpanded] = useState(true);
+
+  return (
+    <div className="mb-2">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="flex items-center gap-1.5 text-[11px] text-orange-400 hover:text-orange-300 transition-colors"
+      >
+        <span>{isActive ? "⏳" : "🧠"}</span>
+        <span className="font-semibold">{isActive ? "Thinking…" : "Reasoning"}</span>
+        <span className="text-orange-600 text-[10px]">{expanded ? "▾" : "▸"}</span>
+      </button>
+      {expanded && (
+        <div className="mt-1 pl-5 border-l-2 border-orange-800/50 text-xs text-orange-200/80 whitespace-pre-wrap max-h-48 overflow-y-auto">
+          {content}
+          {isActive && <span className="cursor-blink text-orange-400">▌</span>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function ChatTab({ toggles, onEvents }: Props) {
   const {
     messages,
@@ -151,7 +175,7 @@ export default function ChatTab({ toggles, onEvents }: Props) {
         )}
 
         {messages
-          .filter((msg) => msg.role === "user" || msg.content || msg.isStreaming)
+          .filter((msg) => msg.role === "user" || msg.content || msg.isStreaming || msg.reasoningContent)
           .map((msg) => (
           <div
             key={msg.id}
@@ -167,6 +191,13 @@ export default function ChatTab({ toggles, onEvents }: Props) {
               <div className="text-xs text-gray-400 mb-1 font-semibold uppercase">
                 {msg.role}
               </div>
+              {/* Reasoning block — shown above the text content */}
+              {msg.reasoningContent && (
+                <ReasoningBlock
+                  content={msg.reasoningContent}
+                  isActive={!!msg.isReasoning}
+                />
+              )}
               <div className="text-sm whitespace-pre-wrap">
                 {msg.content}
                 {msg.isStreaming && (
