@@ -146,7 +146,9 @@ CRITICAL RULES:
 1. The set_chart tool takes a SINGLE argument called chart_json which is a JSON STRING.
 2. You MUST pass a valid JSON string, NOT a raw object. Wrap the entire chart config in a string.
 3. After calling a tool, give a brief 1-2 sentence summary of what you did.
-4. To change only styling, use update_chart_style (it takes simple scalar args).
+4. ALWAYS use set_chart for ANY chart change — including style-only changes like
+   chart_type, title, colors. Reuse the existing data and just change what's needed.
+   This is the ONLY tool that updates the shared state the frontend renders from.
 
 CHART TYPES: bar, line, area, pie, scatter, composed
 
@@ -156,9 +158,10 @@ COLOR PALETTE:
 #36cfc9 (teal), #f759ab (pink)
 
 When asked for sample data, generate realistic data directly in the set_chart call.
-Keep responses concise — 1-2 sentences after each tool call.""",
+When asked for small changes (e.g. "make it red", "switch to line chart"), reuse
+the current chart data and only change the relevant fields. Keep responses concise.""",
         client=chat_client,
-        tools=[set_chart, update_chart_style],
+        tools=[set_chart],
     )
 
     stateful_agent = AgentFrameworkAgent(
