@@ -24,11 +24,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 from ag_ui.core import (
-    ReasoningEndEvent,
-    ReasoningMessageContentEvent,
-    ReasoningMessageEndEvent,
-    ReasoningMessageStartEvent,
-    ReasoningStartEvent,
     StateDeltaEvent,
     StateSnapshotEvent,
     ToolCallResultEvent,
@@ -213,71 +208,6 @@ async def state_diff_stream(
             yield event
 
 
-import uuid
-
-
-async def reasoning_event_stream(
-    raw_events: AsyncGenerator,
-    is_reasoning_model: bool,
-) -> AsyncGenerator:
-    """Inject AG-UI REASONING events for reasoning models.
-
-    Azure AI Foundry doesn't stream readable reasoning content, but we know
-    reasoning happens (ResponseReasoningItem arrives before text). This
-    middleware emits proper REASONING_START → CONTENT → END events so the
-    frontend and event inspector show the complete AG-UI reasoning lifecycle.
-    """
-    if not is_reasoning_model:
-        async for event in raw_events:
-            yield event
-        return
-
-    reasoning_msg_id = str(uuid.uuid4())
-    reasoning_emitted = False
-    reasoning_closed = False
-
-    async for event in raw_events:
-        event_type_raw = getattr(event, "type", "")
-        event_type = event_type_raw.value if hasattr(event_type_raw, "value") else str(event_type_raw)
-
-        # After RUN_STARTED, emit REASONING_START before any other content
-        if event_type == "RUN_STARTED":
-            yield event
-            reasoning_emitted = True
-            yield ReasoningStartEvent(messageId=reasoning_msg_id)
-            yield ReasoningMessageStartEvent(messageId=reasoning_msg_id, role="assistant")
-            yield ReasoningMessageContentEvent(
-                messageId=reasoning_msg_id,
-                delta="Reasoning over the problem…",
-            )
-            continue
-
-        # Close reasoning block before the first text message starts
-        if event_type == "TEXT_MESSAGE_START" and reasoning_emitted and not reasoning_closed:
-            reasoning_closed = True
-            yield ReasoningMessageEndEvent(messageId=reasoning_msg_id)
-            yield ReasoningEndEvent(messageId=reasoning_msg_id)
-
-        # If CUSTOM usage arrives with reasoning tokens, enrich the content
-        if event_type == "CUSTOM" and not reasoning_closed and reasoning_emitted:
-            name = getattr(event, "name", "")
-            value = getattr(event, "value", {})
-            if name == "usage" and isinstance(value, dict):
-                tokens = value.get("openai.reasoning_tokens", 0)
-                if tokens > 0:
-                    yield ReasoningMessageContentEvent(
-                        messageId=reasoning_msg_id,
-                        delta=f" Used {tokens} reasoning tokens.",
-                    )
-
-        yield event
-
-    # Safety: close reasoning if stream ends without text message
-    if reasoning_emitted and not reasoning_closed:
-        yield ReasoningMessageEndEvent(messageId=reasoning_msg_id)
-        yield ReasoningEndEvent(messageId=reasoning_msg_id)
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage MCP tool connection lifecycle."""
@@ -353,12 +283,8 @@ async def dynamic_chat_endpoint(request_body: AGUIRequest) -> StreamingResponse:
             input_data, base_agent, config,
             pending_approvals=pending_approvals if hitl else None,
         )
-        # Wrap through reasoning middleware for reasoning models
-        processed_events = reasoning_event_stream(
-            raw_events, is_reasoning_model=(model_mode == "reasoning"),
-        )
         try:
-            async for event in processed_events:
+            async for event in raw_events:
                 event_count += 1
                 event_type_name = getattr(event, "type", type(event).__name__)
                 if "TOOL_CALL" in str(event_type_name) or "RUN" in str(event_type_name):

@@ -47,14 +47,13 @@ def create_chat_agent(
     )
 
     # Configure reasoning options for reasoning models.
-    # Use include=["reasoning.encrypted_content"] to get reasoning content
-    # streamed back from the model, which the framework converts into
-    # REASONING_* AG-UI events for frontend display.
+    # gpt-5-mini supports reasoning.summary="auto" which streams readable
+    # reasoning content (response.reasoning_summary_text.delta events).
+    # The framework converts these into REASONING_* AG-UI events.
     default_options: OpenAIChatOptions | None = None
     if model_mode == "reasoning":
         default_options = OpenAIChatOptions(
-            reasoning={"effort": reasoning_effort},
-            include=["reasoning.encrypted_content"],
+            reasoning={"effort": reasoning_effort, "summary": "auto"},
         )
 
     # Select tool versions based on HITL mode
