@@ -55,6 +55,31 @@ def _evict_thread_cache() -> None:
         del _thread_states[oldest]
 
 
+def _normalize_state(state: dict[str, Any]) -> dict[str, Any]:
+    """Parse JSON string values in state to enable structural diffing.
+
+    The predict_state_config mechanism stores tool arguments directly in state.
+    For set_chart(chart_json: str), this means state.chart is a JSON STRING,
+    not a parsed object. jsonpatch treats strings as atomic, so diffing two
+    JSON strings always yields a full replace. By parsing them here, we enable
+    granular sub-path diffs like /chart/series/0/color.
+    """
+    result = {}
+    for key, value in state.items():
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+                if isinstance(parsed, (dict, list)):
+                    result[key] = parsed
+                else:
+                    result[key] = value
+            except (json.JSONDecodeError, TypeError):
+                result[key] = value
+        else:
+            result[key] = value
+    return result
+
+
 async def state_diff_stream(
     events_gen: AsyncGenerator,
     thread_id: str,
@@ -63,68 +88,61 @@ async def state_diff_stream(
 ) -> AsyncGenerator:
     """Middleware that converts STATE_SNAPSHOT → STATE_DELTA when the diff is smaller.
 
-    Uses a shadow state seeded from the request's state (canonical) to track what
-    the client currently has. Applies incoming STATE_DELTAs to the shadow, then
-    diffs STATE_SNAPSHOTs against it.
+    Shadow state is seeded from the request's state (canonical) and ONLY updated
+    from STATE_SNAPSHOT events. Predictive STATE_DELTAs from the framework (which
+    set state keys to partial JSON strings during tool arg streaming) are passed
+    through unchanged and do NOT update the shadow — this ensures the shadow always
+    holds properly structured state for clean diffing between runs.
     """
     # Seed shadow from the canonical client state, with thread cache as fallback
-    shadow = copy.deepcopy(request_state) if request_state else {}
+    shadow = _normalize_state(copy.deepcopy(request_state)) if request_state else {}
     if not shadow and thread_id in _thread_states:
         shadow = copy.deepcopy(_thread_states[thread_id])
 
     async for event in events_gen:
         if isinstance(event, StateDeltaEvent):
-            # Apply deltas to shadow state to keep it in sync
-            try:
-                ops = event.delta if isinstance(event.delta, list) else list(event.delta)
-                patch = jsonpatch.JsonPatch(ops)
-                shadow = patch.apply(shadow)
-            except Exception:
-                pass  # Best-effort shadow tracking; pass event through unchanged
+            # Pass through predictive deltas unchanged — do NOT apply to shadow.
+            # Framework predictive deltas set state keys to partial JSON strings
+            # which would corrupt the shadow for subsequent diffing.
             yield event
 
-        elif isinstance(event, StateSnapshotEvent) and use_smart_delta and shadow:
-            new_state = event.snapshot
-            try:
-                patch = jsonpatch.make_patch(shadow, new_state)
-                ops = list(patch)
+        elif isinstance(event, StateSnapshotEvent):
+            # Normalize: parse JSON strings → objects for structural diffing
+            normalized = _normalize_state(event.snapshot)
 
-                if ops:
-                    patch_json = json.dumps(ops, separators=(",", ":"))
-                    snapshot_json = json.dumps(new_state, separators=(",", ":"))
-                    patch_bytes = len(patch_json.encode())
-                    snapshot_bytes = len(snapshot_json.encode())
+            if use_smart_delta and shadow:
+                try:
+                    patch = jsonpatch.make_patch(shadow, normalized)
+                    ops = list(patch)
 
-                    if patch_bytes < snapshot_bytes * 0.8 and snapshot_bytes > 256:
-                        # Delta is meaningfully smaller — emit delta instead
-                        logger.info(
-                            f"[state-diff] Converting STATE_SNAPSHOT to STATE_DELTA: "
-                            f"{patch_bytes}B delta vs {snapshot_bytes}B snapshot "
-                            f"({len(ops)} ops, {patch_bytes/snapshot_bytes:.0%} of full)"
-                        )
-                        yield StateDeltaEvent(delta=ops)
-                        shadow = copy.deepcopy(new_state)
-                        _thread_states[thread_id] = copy.deepcopy(new_state)
-                        _evict_thread_cache()
-                        continue
+                    if ops:
+                        patch_json = json.dumps(ops, separators=(",", ":"))
+                        snapshot_json = json.dumps(normalized, separators=(",", ":"))
+                        patch_bytes = len(patch_json.encode())
+                        snapshot_bytes = len(snapshot_json.encode())
 
-                # Full snapshot is same size or larger, or state is small — pass through
-                shadow = copy.deepcopy(new_state)
-                _thread_states[thread_id] = copy.deepcopy(new_state)
-                _evict_thread_cache()
-                yield event
+                        if patch_bytes < snapshot_bytes * 0.8 and snapshot_bytes > 256:
+                            logger.info(
+                                f"[state-diff] Converting STATE_SNAPSHOT to STATE_DELTA: "
+                                f"{patch_bytes}B delta vs {snapshot_bytes}B snapshot "
+                                f"({len(ops)} ops, {patch_bytes/snapshot_bytes:.0%} of full)"
+                            )
+                            yield StateDeltaEvent(delta=ops)
+                            shadow = copy.deepcopy(normalized)
+                            _thread_states[thread_id] = copy.deepcopy(normalized)
+                            _evict_thread_cache()
+                            continue
+                except Exception as e:
+                    logger.warning(f"[state-diff] Diff failed, passing snapshot through: {e}")
 
-            except Exception as e:
-                logger.warning(f"[state-diff] Diff failed, passing snapshot through: {e}")
-                shadow = copy.deepcopy(new_state)
-                _thread_states[thread_id] = copy.deepcopy(new_state)
-                yield event
+            # Emit normalized snapshot (parsed JSON strings → objects)
+            yield StateSnapshotEvent(snapshot=normalized)
+            shadow = copy.deepcopy(normalized)
+            _thread_states[thread_id] = copy.deepcopy(normalized)
+            _evict_thread_cache()
+
         else:
-            # STATE_SNAPSHOT without smart delta, or any other event
-            if isinstance(event, StateSnapshotEvent):
-                shadow = copy.deepcopy(event.snapshot)
-                _thread_states[thread_id] = copy.deepcopy(event.snapshot)
-                _evict_thread_cache()
+            # Any other event type — pass through unchanged
             yield event
 
 
