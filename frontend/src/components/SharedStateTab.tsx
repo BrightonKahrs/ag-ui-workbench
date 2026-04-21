@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { TimestampedEvent } from "../types/ag-ui";
+import type { FeatureToggles, TimestampedEvent } from "../types/ag-ui";
 import { useSharedState } from "../hooks/useSharedState";
 import {
   BarChart,
@@ -23,6 +23,7 @@ import {
 
 interface Props {
   onEvents: (events: TimestampedEvent[]) => void;
+  toggles: FeatureToggles;
 }
 
 interface DataPointRaw {
@@ -199,7 +200,7 @@ function ChartRenderer({ chart }: { chart: ChartState }) {
   }
 }
 
-export default function SharedStateTab({ onEvents }: Props) {
+export default function SharedStateTab({ onEvents, toggles }: Props) {
   const {
     state,
     events,
@@ -208,7 +209,7 @@ export default function SharedStateTab({ onEvents }: Props) {
     sendMessage,
     clearState,
     messages,
-  } = useSharedState("/state");
+  } = useSharedState("/state", toggles);
 
   const [input, setInput] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);

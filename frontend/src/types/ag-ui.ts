@@ -240,6 +240,7 @@ export interface FeatureToggles {
   humanInTheLoop: boolean;
   sharedState: boolean;
   predictiveUpdates: boolean;
+  smartDelta: boolean;
   stepEvents: boolean;
   modelMode: ModelMode;
   reasoningEffort: ReasoningEffort;
@@ -251,6 +252,7 @@ export const DEFAULT_TOGGLES: FeatureToggles = {
   humanInTheLoop: false,
   sharedState: false,
   predictiveUpdates: true,
+  smartDelta: true,
   stepEvents: true,
   modelMode: "chat",
   reasoningEffort: "medium",

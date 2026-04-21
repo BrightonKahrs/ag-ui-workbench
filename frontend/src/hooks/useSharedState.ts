@@ -3,6 +3,7 @@
  *
  * Manages bidirectional state sync using STATE_SNAPSHOT and STATE_DELTA events.
  * Applies JSON Patch (RFC 6902) operations for incremental updates.
+ * Tracks threadId across runs and passes forwardedProps (including smartDelta toggle).
  */
 
 import { useCallback, useRef, useState } from "react";
@@ -11,6 +12,7 @@ import type {
   AGUIEvent,
   AGUIMessage,
   AGUIRunRequest,
+  FeatureToggles,
   TimestampedEvent,
 } from "../types/ag-ui";
 import { AGUIEventType } from "../types/ag-ui";
@@ -30,7 +32,10 @@ export interface SharedStateReturn {
 
 const MAX_EVENTS = 500;
 
-export function useSharedState(endpoint: string): SharedStateReturn {
+export function useSharedState(
+  endpoint: string,
+  toggles?: FeatureToggles,
+): SharedStateReturn {
   const [state, setState] = useState<Record<string, unknown>>({});
   const [events, setEvents] = useState<TimestampedEvent[]>([]);
   const [isRunning, setIsRunning] = useState(false);
@@ -43,6 +48,7 @@ export function useSharedState(endpoint: string): SharedStateReturn {
   const eventCounterRef = useRef(0);
   const conversationRef = useRef<AGUIMessage[]>([]);
   const stateRef = useRef<Record<string, unknown>>({});
+  const threadIdRef = useRef<string | null>(null);
 
   const addEvent = useCallback((event: AGUIEvent) => {
     const timestamped: TimestampedEvent = {
@@ -63,17 +69,22 @@ export function useSharedState(endpoint: string): SharedStateReturn {
       setError(null);
       setIsRunning(true);
 
-      // Add user message to UI
       setMessages((prev) => [
         ...prev,
         { id: `msg-${Date.now()}`, role: "user", content },
       ]);
       conversationRef.current.push({ role: "user", content });
 
-      // Include current state in the request
+      // Build request with threadId and forwardedProps for smart delta toggle
       const request: AGUIRunRequest = {
         messages: conversationRef.current,
         state: stateRef.current,
+        threadId: threadIdRef.current ?? undefined,
+        forwardedProps: {
+          playground: {
+            smartDelta: toggles?.smartDelta ?? true,
+          },
+        },
       };
 
       const abortController = new AbortController();
@@ -89,21 +100,27 @@ export function useSharedState(endpoint: string): SharedStateReturn {
           addEvent(event);
 
           switch (event.type) {
+            case AGUIEventType.RUN_STARTED: {
+              // Capture threadId for subsequent requests
+              if (event.threadId) {
+                threadIdRef.current = event.threadId;
+              }
+              break;
+            }
+
             case AGUIEventType.STATE_SNAPSHOT: {
-              // Replace entire state
               stateRef.current = event.snapshot;
               setState({ ...event.snapshot });
               break;
             }
 
             case AGUIEventType.STATE_DELTA: {
-              // Apply JSON Patch operations
               try {
                 const patched = applyPatch(
                   stateRef.current,
                   event.delta as Operation[],
-                  true, // validate
-                  false // don't mutate
+                  true,
+                  false,
                 );
                 stateRef.current = patched.newDocument;
                 setState({ ...patched.newDocument });
@@ -130,8 +147,8 @@ export function useSharedState(endpoint: string): SharedStateReturn {
                   prev.map((m) =>
                     m.id === currentMessageId
                       ? { ...m, content: currentContent }
-                      : m
-                  )
+                      : m,
+                  ),
                 );
               }
               break;
@@ -168,7 +185,7 @@ export function useSharedState(endpoint: string): SharedStateReturn {
         },
       });
     },
-    [isRunning, endpoint, addEvent]
+    [isRunning, endpoint, addEvent, toggles?.smartDelta],
   );
 
   const clearState = useCallback(() => {
@@ -176,6 +193,7 @@ export function useSharedState(endpoint: string): SharedStateReturn {
     stateRef.current = {};
     setMessages([]);
     conversationRef.current = [];
+    threadIdRef.current = null;
   }, []);
 
   const clearEvents = useCallback(() => {

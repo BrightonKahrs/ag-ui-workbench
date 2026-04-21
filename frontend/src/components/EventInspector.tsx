@@ -110,8 +110,14 @@ function getEventSummary(event: TimestampedEvent["event"]): string {
       return event.content?.slice(0, 40) + "...";
     case AGUIEventType.STATE_SNAPSHOT:
       return `${Object.keys(event.snapshot).length} keys`;
-    case AGUIEventType.STATE_DELTA:
-      return `${event.delta.length} operation(s)`;
+    case AGUIEventType.STATE_DELTA: {
+      const ops = event.delta;
+      if (ops.length === 1) {
+        const op = ops[0];
+        return `${op.op} ${op.path}`;
+      }
+      return `${ops.length} ops: ${ops.map((o) => `${o.op} ${o.path}`).join(", ").slice(0, 60)}`;
+    }
     case AGUIEventType.CUSTOM:
       return `${event.name}: ${JSON.stringify(event.value).slice(0, 50)}`;
     default:

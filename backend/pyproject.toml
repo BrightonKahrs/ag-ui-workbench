@@ -13,6 +13,7 @@ dependencies = [
     "pydantic>=2.0",
     "python-dotenv",
     "fastmcp>=2.0",
+    "jsonpatch>=1.33",
 ]
 
 [tool.uv]

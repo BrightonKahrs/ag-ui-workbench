@@ -145,6 +145,13 @@ export default function FeatureToggles({ toggles, onChange, activeTab }: Props) 
           disabled={activeTab === "chat"}
         />
         <ToggleItem
+          label="Smart Deltas"
+          description="Convert STATE_SNAPSHOT → STATE_DELTA when diff is smaller (JSON Patch)"
+          enabled={toggles.smartDelta}
+          onToggle={() => update("smartDelta")}
+          disabled={activeTab === "chat"}
+        />
+        <ToggleItem
           label="Step Events"
           description="STEP_STARTED/STEP_FINISHED tracking"
           enabled={toggles.stepEvents}

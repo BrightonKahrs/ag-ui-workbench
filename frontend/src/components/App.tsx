@@ -74,7 +74,7 @@ export default function App() {
           {activeTab === "chat" ? (
             <ChatTab toggles={toggles} onEvents={setInspectorEvents} />
           ) : (
-            <SharedStateTab onEvents={setInspectorEvents} />
+            <SharedStateTab onEvents={setInspectorEvents} toggles={toggles} />
           )}
         </main>
 

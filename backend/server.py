@@ -2,26 +2,30 @@
 
 Exposes AG-UI endpoints:
 - /chat      - Dynamic chat endpoint (reads forwardedProps for model mode, HITL, etc.)
-- /state     - Shared state agent (data viz) with predictive updates
+- /state     - Shared state agent (data viz) with predictive updates + smart deltas
 
 Managed with UV: `uv run server.py`
 MCP server must be running on :8889: `uv run python mcp_server.py`
 """
 
+import copy
+import json
 import logging
 import os
 from collections import OrderedDict
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from typing import Any
 
+import jsonpatch
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
+from ag_ui.core import StateDeltaEvent, StateSnapshotEvent
 from ag_ui.encoder import EventEncoder
 from agent_framework import MCPStreamableHTTPTool
-from agent_framework_ag_ui import add_agent_framework_fastapi_endpoint
 from agent_framework_ag_ui._agent import AgentConfig
 from agent_framework_ag_ui._agent_run import run_agent_stream
 from agent_framework_ag_ui._types import AGUIRequest
@@ -36,8 +40,92 @@ logger = logging.getLogger(__name__)
 mcp_tool: MCPStreamableHTTPTool | None = None
 
 # Shared pending approvals registry across requests
-# This allows the resume flow to find approvals emitted during the initial request
 pending_approvals: OrderedDict[str, str] = OrderedDict()
+
+# --- State Diff Middleware ---
+# Per-thread state cache for computing deltas across runs
+_thread_states: dict[str, dict[str, Any]] = {}
+_MAX_THREAD_CACHE = 100  # Evict oldest threads when cache exceeds this
+
+
+def _evict_thread_cache() -> None:
+    """Simple eviction: remove oldest entries when cache is too large."""
+    while len(_thread_states) > _MAX_THREAD_CACHE:
+        oldest = next(iter(_thread_states))
+        del _thread_states[oldest]
+
+
+async def state_diff_stream(
+    events_gen: AsyncGenerator,
+    thread_id: str,
+    request_state: dict[str, Any] | None = None,
+    use_smart_delta: bool = True,
+) -> AsyncGenerator:
+    """Middleware that converts STATE_SNAPSHOT → STATE_DELTA when the diff is smaller.
+
+    Uses a shadow state seeded from the request's state (canonical) to track what
+    the client currently has. Applies incoming STATE_DELTAs to the shadow, then
+    diffs STATE_SNAPSHOTs against it.
+    """
+    # Seed shadow from the canonical client state, with thread cache as fallback
+    shadow = copy.deepcopy(request_state) if request_state else {}
+    if not shadow and thread_id in _thread_states:
+        shadow = copy.deepcopy(_thread_states[thread_id])
+
+    async for event in events_gen:
+        if isinstance(event, StateDeltaEvent):
+            # Apply deltas to shadow state to keep it in sync
+            try:
+                ops = event.delta if isinstance(event.delta, list) else list(event.delta)
+                patch = jsonpatch.JsonPatch(ops)
+                shadow = patch.apply(shadow)
+            except Exception:
+                pass  # Best-effort shadow tracking; pass event through unchanged
+            yield event
+
+        elif isinstance(event, StateSnapshotEvent) and use_smart_delta and shadow:
+            new_state = event.snapshot
+            try:
+                patch = jsonpatch.make_patch(shadow, new_state)
+                ops = list(patch)
+
+                if ops:
+                    patch_json = json.dumps(ops, separators=(",", ":"))
+                    snapshot_json = json.dumps(new_state, separators=(",", ":"))
+                    patch_bytes = len(patch_json.encode())
+                    snapshot_bytes = len(snapshot_json.encode())
+
+                    if patch_bytes < snapshot_bytes * 0.8 and snapshot_bytes > 256:
+                        # Delta is meaningfully smaller — emit delta instead
+                        logger.info(
+                            f"[state-diff] Converting STATE_SNAPSHOT to STATE_DELTA: "
+                            f"{patch_bytes}B delta vs {snapshot_bytes}B snapshot "
+                            f"({len(ops)} ops, {patch_bytes/snapshot_bytes:.0%} of full)"
+                        )
+                        yield StateDeltaEvent(delta=ops)
+                        shadow = copy.deepcopy(new_state)
+                        _thread_states[thread_id] = copy.deepcopy(new_state)
+                        _evict_thread_cache()
+                        continue
+
+                # Full snapshot is same size or larger, or state is small — pass through
+                shadow = copy.deepcopy(new_state)
+                _thread_states[thread_id] = copy.deepcopy(new_state)
+                _evict_thread_cache()
+                yield event
+
+            except Exception as e:
+                logger.warning(f"[state-diff] Diff failed, passing snapshot through: {e}")
+                shadow = copy.deepcopy(new_state)
+                _thread_states[thread_id] = copy.deepcopy(new_state)
+                yield event
+        else:
+            # STATE_SNAPSHOT without smart delta, or any other event
+            if isinstance(event, StateSnapshotEvent):
+                shadow = copy.deepcopy(event.snapshot)
+                _thread_states[thread_id] = copy.deepcopy(event.snapshot)
+                _evict_thread_cache()
+            yield event
 
 
 @asynccontextmanager
@@ -52,19 +140,11 @@ async def lifespan(app: FastAPI):
             description="Local MCP server with knowledge base, datasets, and statistics tools",
         )
         await mcp_tool.__aenter__()
-
-        # Register stateful agent endpoint (fixed - no dynamic config needed)
-        stateful_agent = create_stateful_agent()
-        add_agent_framework_fastapi_endpoint(app, stateful_agent, "/state")
-
         print(f"✅ MCP server connected at {mcp_url}")
         yield
     except Exception as e:
         print(f"⚠️  MCP connection failed ({e}), starting without MCP tools")
         mcp_tool = None
-
-        stateful_agent = create_stateful_agent()
-        add_agent_framework_fastapi_endpoint(app, stateful_agent, "/state")
         yield
     finally:
         if mcp_tool:
@@ -93,14 +173,9 @@ app.add_middleware(
 
 @app.post("/chat", tags=["AG-UI"])
 async def dynamic_chat_endpoint(request_body: AGUIRequest) -> StreamingResponse:
-    """Dynamic chat endpoint that reads forwardedProps for HITL, model mode, etc.
-
-    This replaces the static endpoint registration to support per-request
-    configuration of model mode, human-in-the-loop approval, and reasoning options.
-    """
+    """Dynamic chat endpoint that reads forwardedProps for HITL, model mode, etc."""
     input_data = request_body.model_dump(exclude_none=True)
 
-    # Extract playground options from forwardedProps
     forwarded = input_data.get("forwarded_props") or {}
     playground = forwarded.get("playground", {})
 
@@ -112,25 +187,17 @@ async def dynamic_chat_endpoint(request_body: AGUIRequest) -> StreamingResponse:
         f"messages={len(input_data.get('messages', []))}"
     )
 
-    # Create agent dynamically based on request options
     base_agent = create_chat_agent(
         model_mode=model_mode,
         hitl=hitl,
         mcp_tools=mcp_tool,
     )
-
-    # Build config for this request
-    config = AgentConfig(
-        require_confirmation=hitl,
-    )
-
+    config = AgentConfig(require_confirmation=hitl)
     encoder = EventEncoder()
 
     async def event_generator() -> AsyncGenerator[str]:
         event_count = 0
         try:
-            # Use run_agent_stream directly with shared pending_approvals
-            # so approval registry persists across initial request and resume
             async for event in run_agent_stream(
                 input_data, base_agent, config,
                 pending_approvals=pending_approvals if hitl else None,
@@ -139,45 +206,117 @@ async def dynamic_chat_endpoint(request_body: AGUIRequest) -> StreamingResponse:
                 event_type_name = getattr(event, "type", type(event).__name__)
                 if "TOOL_CALL" in str(event_type_name) or "RUN" in str(event_type_name):
                     logger.info(f"[/chat] Event {event_count}: {event_type_name}")
-
                 try:
                     yield encoder.encode(event)
                 except Exception as encode_error:
                     logger.exception("[/chat] Failed to encode event %s", event_type_name)
                     from ag_ui.core import RunErrorEvent
-
-                    run_error = RunErrorEvent(
-                        message="Internal error while streaming events.",
-                        code=type(encode_error).__name__,
-                    )
                     try:
-                        yield encoder.encode(run_error)
+                        yield encoder.encode(RunErrorEvent(
+                            message="Internal error while streaming events.",
+                            code=type(encode_error).__name__,
+                        ))
                     except Exception:
                         pass
                     return
-
             logger.info(f"[/chat] Completed streaming {event_count} events")
         except Exception:
             logger.exception("[/chat] Streaming failed")
             from ag_ui.core import RunErrorEvent
-
-            run_error = RunErrorEvent(
-                message="Internal error while streaming events.",
-                code="StreamError",
-            )
             try:
-                yield encoder.encode(run_error)
+                yield encoder.encode(RunErrorEvent(
+                    message="Internal error while streaming events.",
+                    code="StreamError",
+                ))
             except Exception:
                 pass
 
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.post("/state", tags=["AG-UI"])
+async def stateful_endpoint(request_body: AGUIRequest) -> StreamingResponse:
+    """Shared state endpoint with smart delta middleware.
+
+    Reads forwardedProps.playground.smartDelta to toggle STATE_SNAPSHOT → STATE_DELTA
+    conversion. When enabled, small state changes are sent as JSON Patch operations
+    instead of full snapshots.
+    """
+    input_data = request_body.model_dump(exclude_none=True)
+
+    forwarded = input_data.get("forwarded_props") or {}
+    playground = forwarded.get("playground", {})
+    smart_delta = playground.get("smartDelta", True)
+
+    thread_id = input_data.get("thread_id") or input_data.get("threadId") or "default"
+    request_state = input_data.get("state")
+
+    logger.info(
+        f"[/state] smart_delta={smart_delta}, thread={thread_id[:8]}, "
+        f"messages={len(input_data.get('messages', []))}"
+    )
+
+    # Create a fresh stateful agent per request
+    stateful_agent_wrapper = create_stateful_agent()
+    base_agent = stateful_agent_wrapper.agent
+    config = AgentConfig(
+        state_schema=stateful_agent_wrapper.config.state_schema,
+        predict_state_config=stateful_agent_wrapper.config.predict_state_config,
+    )
+
+    encoder = EventEncoder()
+
+    async def event_generator() -> AsyncGenerator[str]:
+        event_count = 0
+        raw_events = run_agent_stream(input_data, base_agent, config)
+
+        # Wrap through state diff middleware
+        processed_events = state_diff_stream(
+            raw_events,
+            thread_id=thread_id,
+            request_state=request_state,
+            use_smart_delta=smart_delta,
+        )
+
+        try:
+            async for event in processed_events:
+                event_count += 1
+                event_type_name = getattr(event, "type", type(event).__name__)
+                if "STATE" in str(event_type_name) or "RUN" in str(event_type_name):
+                    logger.info(f"[/state] Event {event_count}: {event_type_name}")
+                try:
+                    yield encoder.encode(event)
+                except Exception as encode_error:
+                    logger.exception("[/state] Failed to encode event %s", event_type_name)
+                    from ag_ui.core import RunErrorEvent
+                    try:
+                        yield encoder.encode(RunErrorEvent(
+                            message="Internal error while streaming events.",
+                            code=type(encode_error).__name__,
+                        ))
+                    except Exception:
+                        pass
+                    return
+            logger.info(f"[/state] Completed streaming {event_count} events")
+        except Exception:
+            logger.exception("[/state] Streaming failed")
+            from ag_ui.core import RunErrorEvent
+            try:
+                yield encoder.encode(RunErrorEvent(
+                    message="Internal error while streaming events.",
+                    code="StreamError",
+                ))
+            except Exception:
+                pass
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
     )
 
 
