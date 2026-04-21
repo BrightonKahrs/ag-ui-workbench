@@ -89,21 +89,34 @@ async def state_diff_stream(
     """Middleware that converts STATE_SNAPSHOT → STATE_DELTA when the diff is smaller.
 
     Shadow state is seeded from the request's state (canonical) and ONLY updated
-    from STATE_SNAPSHOT events. Predictive STATE_DELTAs from the framework (which
-    set state keys to partial JSON strings during tool arg streaming) are passed
-    through unchanged and do NOT update the shadow — this ensures the shadow always
-    holds properly structured state for clean diffing between runs.
+    from STATE_SNAPSHOT events.
+
+    When smart deltas is ON and we already have state (not the first chart):
+    - Predictive STATE_DELTAs (framework's full /key replaces during streaming)
+      are SUPPRESSED — the chart stays stable at the current version.
+    - STATE_SNAPSHOT is converted to a granular STATE_DELTA with only the changed
+      fields (e.g., /chart/series/0/color instead of replacing the entire /chart).
+
+    When smart deltas is OFF or this is the first chart (no shadow):
+    - All events pass through unchanged — full predictive streaming experience.
     """
     # Seed shadow from the canonical client state, with thread cache as fallback
     shadow = _normalize_state(copy.deepcopy(request_state)) if request_state else {}
     if not shadow and thread_id in _thread_states:
         shadow = copy.deepcopy(_thread_states[thread_id])
 
+    # When we have prior state + smart deltas, suppress predictive streaming
+    # to avoid sending the full chart twice (once predictive, once as delta)
+    suppress_predictive = use_smart_delta and bool(shadow)
+
     async for event in events_gen:
         if isinstance(event, StateDeltaEvent):
-            # Pass through predictive deltas unchanged — do NOT apply to shadow.
-            # Framework predictive deltas set state keys to partial JSON strings
-            # which would corrupt the shadow for subsequent diffing.
+            if suppress_predictive:
+                # Suppress framework's predictive deltas (replace /chart with
+                # partial JSON strings). The chart stays at the current version
+                # until our granular delta arrives after tool completion.
+                logger.debug("[state-diff] Suppressing predictive STATE_DELTA")
+                continue
             yield event
 
         elif isinstance(event, StateSnapshotEvent):
