@@ -142,7 +142,7 @@ interface RunChain {
   hasError: boolean;
 }
 
-function buildRunChains(events: TimestampedEvent[]): RunChain[] {
+function buildRunChains(events: TimestampedEvent[], viewMode: ViewMode): RunChain[] {
   if (events.length === 0) return [];
 
   const chains: RunChain[] = [];
@@ -158,7 +158,7 @@ function buildRunChains(events: TimestampedEvent[]): RunChain[] {
       runId: currentRunId,
       threadId: currentThreadId,
       events: currentChain,
-      subGroups: groupContiguousEvents(currentChain),
+      subGroups: buildSubGroups(currentChain, viewMode),
       firstTimestamp: currentChain[0].timestamp,
       lastTimestamp: currentChain[currentChain.length - 1].timestamp,
       isComplete: complete,
@@ -210,6 +210,8 @@ interface EventGroup {
   lastTimestamp: number;
 }
 
+type ViewMode = "sequential" | "grouped";
+
 function groupContiguousEvents(events: TimestampedEvent[]): EventGroup[] {
   if (events.length === 0) return [];
   const groups: EventGroup[] = [];
@@ -232,7 +234,6 @@ function groupContiguousEvents(events: TimestampedEvent[]): EventGroup[] {
       currentGroup = [events[i]];
     }
   }
-  // Push the last group
   groups.push({
     id: `grp-${currentGroup[0].id}`,
     category: currentCat,
@@ -241,6 +242,91 @@ function groupContiguousEvents(events: TimestampedEvent[]): EventGroup[] {
     lastTimestamp: currentGroup[currentGroup.length - 1].timestamp,
   });
   return groups;
+}
+
+// --- Lifecycle-based grouping (grouped mode) ---
+// Groups events by their logical lifecycle (start → end) regardless of interleaving.
+// E.g., TEXT_MESSAGE_START and TEXT_MESSAGE_END are always in the same group even
+// if CUSTOM or STATE events appear between them in the stream.
+
+const LIFECYCLE_CATS = new Set(["TEXT_MESSAGE", "TOOL_CALL", "REASONING", "STEP"]);
+
+const START_EVENTS = new Set<string>([
+  AGUIEventType.TEXT_MESSAGE_START,
+  AGUIEventType.TOOL_CALL_START,
+  AGUIEventType.REASONING_START,
+  AGUIEventType.STEP_STARTED,
+]);
+
+const END_EVENTS = new Set<string>([
+  AGUIEventType.TEXT_MESSAGE_END,
+  AGUIEventType.TOOL_CALL_RESULT,
+  AGUIEventType.REASONING_END,
+  AGUIEventType.STEP_FINISHED,
+]);
+
+function groupByLifecycle(events: TimestampedEvent[]): EventGroup[] {
+  if (events.length === 0) return [];
+
+  // Phase 1: assign each event to a lifecycle group or mark standalone
+  const lifecycleOf = new Map<number, string>(); // event index → lifecycle id
+  const lifecycles = new Map<string, { cat: string; indices: number[] }>();
+  const open = new Map<string, string>(); // category → active lifecycle id
+  let nextLc = 0;
+
+  for (let i = 0; i < events.length; i++) {
+    const type = events[i].event.type;
+    const cat = getCategoryPrefix(type);
+
+    if (START_EVENTS.has(type)) {
+      const id = `lc-${nextLc++}`;
+      open.set(cat, id);
+      lifecycles.set(id, { cat, indices: [i] });
+      lifecycleOf.set(i, id);
+    } else if (open.has(cat) && LIFECYCLE_CATS.has(cat)) {
+      const id = open.get(cat)!;
+      lifecycles.get(id)!.indices.push(i);
+      lifecycleOf.set(i, id);
+      if (END_EVENTS.has(type)) {
+        open.delete(cat);
+      }
+    }
+  }
+
+  // Phase 2: emit groups in order — lifecycle group at position of its first event
+  const result: EventGroup[] = [];
+  const emitted = new Set<string>();
+
+  for (let i = 0; i < events.length; i++) {
+    const lcId = lifecycleOf.get(i);
+    if (lcId && !emitted.has(lcId)) {
+      const lc = lifecycles.get(lcId)!;
+      const groupEvents = lc.indices.map((idx) => events[idx]);
+      result.push({
+        id: `grp-${groupEvents[0].id}`,
+        category: lc.cat,
+        events: groupEvents,
+        firstTimestamp: groupEvents[0].timestamp,
+        lastTimestamp: groupEvents[groupEvents.length - 1].timestamp,
+      });
+      emitted.add(lcId);
+    } else if (!lcId) {
+      // Standalone event — not part of any lifecycle
+      result.push({
+        id: `grp-${events[i].id}`,
+        category: getCategoryPrefix(events[i].event.type),
+        events: [events[i]],
+        firstTimestamp: events[i].timestamp,
+        lastTimestamp: events[i].timestamp,
+      });
+    }
+  }
+
+  return result;
+}
+
+function buildSubGroups(events: TimestampedEvent[], mode: ViewMode): EventGroup[] {
+  return mode === "grouped" ? groupByLifecycle(events) : groupContiguousEvents(events);
 }
 
 // Summarize what happened in a group (shown on the collapsed header)
@@ -290,6 +376,7 @@ export default function EventInspector({ events }: Props) {
   const [expandedRuns, setExpandedRuns] = useState<Set<string>>(new Set());
   const [fullyExpandedGroups, setFullyExpandedGroups] = useState<Set<string>>(new Set());
   const [expandedEvents, setExpandedEvents] = useState<Set<string>>(new Set());
+  const [viewMode, setViewMode] = useState<ViewMode>("sequential");
 
   const MAX_VISIBLE_CHILDREN = 5;
 
@@ -309,8 +396,8 @@ export default function EventInspector({ events }: Props) {
 
   // When filtering, show flat list. Otherwise, show per-run chains.
   const runChains = useMemo(
-    () => (filter ? null : buildRunChains(filteredEvents)),
-    [filteredEvents, filter]
+    () => (filter ? null : buildRunChains(filteredEvents, viewMode)),
+    [filteredEvents, filter, viewMode]
   );
 
   const toggleGroup = (id: string) => {
@@ -403,6 +490,22 @@ export default function EventInspector({ events }: Props) {
           />
           Auto-scroll
         </label>
+        <div className="flex items-center gap-1 mt-2">
+          <span className="text-[10px] text-gray-500 mr-1">View:</span>
+          {(["sequential", "grouped"] as ViewMode[]).map((mode) => (
+            <button
+              key={mode}
+              onClick={() => setViewMode(mode)}
+              className={`text-[10px] px-2 py-0.5 rounded font-mono transition-colors ${
+                viewMode === mode
+                  ? "bg-purple-600 text-white"
+                  : "bg-gray-800 text-gray-400 hover:text-gray-300"
+              }`}
+            >
+              {mode}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Event List */}
@@ -456,15 +559,15 @@ export default function EventInspector({ events }: Props) {
                   </div>
                 </div>
 
-                {/* Expanded run — show sub-groups */}
+                {/* Expanded run — show sub-groups at same indent level */}
                 {isRunExpanded && (
-                  <div className="ml-2 border-l-2 border-blue-900/40 pl-1 space-y-0.5">
+                  <div className="pl-3 space-y-0.5">
                     {chain.subGroups.map((group) => {
                       const isExpanded = expandedGroups.has(group.id);
                       const isSingleton = group.events.length === 1;
 
                       if (isSingleton) {
-                        return renderEvent(group.events[0], true);
+                        return renderEvent(group.events[0], false);
                       }
 
                       const summary = getGroupSummary(group);
@@ -498,7 +601,7 @@ export default function EventInspector({ events }: Props) {
                             </div>
                           </div>
                           {isExpanded && (
-                            <div className="space-y-0.5">
+                            <div className="pl-3 border-l-2 border-current/20 ml-1 space-y-0.5">
                               {(() => {
                                 const isFullyExpanded = fullyExpandedGroups.has(group.id);
                                 const visibleEvents = isFullyExpanded
@@ -507,10 +610,10 @@ export default function EventInspector({ events }: Props) {
                                 const hiddenCount = group.events.length - MAX_VISIBLE_CHILDREN;
                                 return (
                                   <>
-                                    {visibleEvents.map((te) => renderEvent(te, true))}
+                                    {visibleEvents.map((te) => renderEvent(te, false))}
                                     {!isFullyExpanded && hiddenCount > 0 && (
                                       <button
-                                        className="ml-3 text-[10px] text-gray-500 hover:text-gray-300 py-1 px-2 rounded bg-gray-800/50 hover:bg-gray-800 transition-colors"
+                                        className="text-[10px] text-gray-500 hover:text-gray-300 py-1 px-2 rounded bg-gray-800/50 hover:bg-gray-800 transition-colors"
                                         onClick={(e) => {
                                           e.stopPropagation();
                                           setFullyExpandedGroups((prev) => new Set([...prev, group.id]));

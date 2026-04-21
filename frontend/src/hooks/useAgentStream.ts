@@ -57,7 +57,7 @@ interface UseAgentStreamReturn {
   cancelRun: () => void;
 }
 
-const MAX_EVENTS = 500;
+const MAX_EVENTS = 2000;
 
 export function useAgentStream(
   _endpoint: string,
