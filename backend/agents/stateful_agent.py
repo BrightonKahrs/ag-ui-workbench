@@ -2,13 +2,12 @@
 
 import json
 import os
-from typing import Optional
 
 from agent_framework import Agent, tool
 from agent_framework.foundry import FoundryChatClient
 from agent_framework_ag_ui import AgentFrameworkAgent
 from azure.identity import DefaultAzureCredential
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 # --- Pydantic models (used for validation, NOT as tool param types) ---
@@ -46,7 +45,8 @@ class ChartConfig(BaseModel):
 
 @tool
 def set_chart(chart_json: str) -> str:
-    """Set the entire chart configuration. Use this to create or replace a visualization.
+    """Set the entire chart configuration. Use this to CREATE a new chart or make
+    MAJOR changes (new data, restructure, completely different visualization).
 
     Pass a JSON STRING with this structure:
     {
@@ -80,45 +80,52 @@ def set_chart(chart_json: str) -> str:
 
 
 @tool
-def update_chart_style(
-    chart_type: Optional[str] = None,
-    title: Optional[str] = None,
-    x_label: Optional[str] = None,
-    y_label: Optional[str] = None,
-    show_legend: Optional[bool] = None,
-    show_grid: Optional[bool] = None,
-    stacked: Optional[bool] = None,
-) -> str:
-    """Update chart styling without modifying data. Use for visual tweaks.
+def patch_chart(patches_json: str) -> str:
+    """Apply JSON Patch (RFC 6902) operations to modify the EXISTING chart.
+
+    Use this instead of set_chart for SMALL, targeted changes like colors, title,
+    chart type, axis labels, or boolean flags. Much more efficient — avoids
+    regenerating the entire chart with all data points.
+
+    The server-side middleware will apply these patches to the current chart state
+    and validate the result. If the patch produces an invalid chart, it will be
+    rejected.
 
     Args:
-        chart_type: New chart type (bar, line, area, pie, scatter, composed).
-        title: New chart title.
-        x_label: New x-axis label.
-        y_label: New y-axis label.
-        show_legend: Show or hide legend.
-        show_grid: Show or hide grid.
-        stacked: Enable or disable stacking.
+        patches_json: A JSON array of RFC 6902 patch operations.
+
+    Common patch paths (relative to the chart object):
+    - /title                  — Chart title (string)
+    - /chart_type             — Chart type: bar, line, area, pie, scatter, composed
+    - /series/0/color         — Color of first series (hex string like "#22c55e")
+    - /series/0/name          — Display name of first series
+    - /x_label, /y_label      — Axis labels
+    - /show_legend             — Boolean
+    - /show_grid               — Boolean
+    - /stacked                 — Boolean
+
+    Example — change first series color to green:
+        [{"op": "replace", "path": "/series/0/color", "value": "#22c55e"}]
+
+    Example — change title and chart type:
+        [
+            {"op": "replace", "path": "/title", "value": "Updated Title"},
+            {"op": "replace", "path": "/chart_type", "value": "area"}
+        ]
 
     Returns:
-        Confirmation message.
+        JSON result: {"ok": true, "applied": N} or {"ok": false, "error": "..."}
     """
-    changes = []
-    if chart_type:
-        changes.append(f"type→{chart_type}")
-    if title:
-        changes.append(f"title→'{title}'")
-    if x_label is not None:
-        changes.append(f"x_label→'{x_label}'")
-    if y_label is not None:
-        changes.append(f"y_label→'{y_label}'")
-    if show_legend is not None:
-        changes.append(f"legend→{show_legend}")
-    if show_grid is not None:
-        changes.append(f"grid→{show_grid}")
-    if stacked is not None:
-        changes.append(f"stacked→{stacked}")
-    return f"Chart style updated: {', '.join(changes)}" if changes else "No style changes."
+    try:
+        patches = json.loads(patches_json) if isinstance(patches_json, str) else patches_json
+        if not isinstance(patches, list):
+            return json.dumps({"ok": False, "error": "patches_json must be a JSON array"})
+        for p in patches:
+            if not isinstance(p, dict) or "op" not in p or "path" not in p:
+                return json.dumps({"ok": False, "error": f"Invalid patch operation: {p}"})
+        return json.dumps({"ok": True, "applied": len(patches)})
+    except Exception as e:
+        return json.dumps({"ok": False, "error": str(e)})
 
 
 # --- Agent Creation ---
@@ -140,15 +147,21 @@ def create_stateful_agent() -> AgentFrameworkAgent:
         name="DataVizAgent",
         instructions="""You are a data visualization assistant in the AG-UI Playground.
 You create and modify interactive charts using shared state. The frontend renders
-a Recharts component directly from the state you produce via set_chart.
+a Recharts component directly from the state you produce.
 
-CRITICAL RULES:
-1. The set_chart tool takes a SINGLE argument called chart_json which is a JSON STRING.
-2. You MUST pass a valid JSON string, NOT a raw object. Wrap the entire chart config in a string.
+TOOL SELECTION (critical):
+- Use set_chart to CREATE a new chart or make MAJOR changes (new data, restructure,
+  completely different visualization). It takes a full chart JSON string.
+- Use patch_chart for SMALL, targeted changes to an EXISTING chart (color, title,
+  chart_type, axis labels, boolean flags). It takes a JSON Patch array — much more
+  efficient because it avoids regenerating the entire chart with all data points.
+
+RULES:
+1. set_chart takes a SINGLE argument called chart_json which is a JSON STRING.
+2. patch_chart takes a SINGLE argument called patches_json which is a JSON array
+   of RFC 6902 operations (e.g. [{"op": "replace", "path": "/series/0/color", "value": "#22c55e"}]).
 3. After calling a tool, give a brief 1-2 sentence summary of what you did.
-4. ALWAYS use set_chart for ANY chart change — including style-only changes like
-   chart_type, title, colors. Reuse the existing data and just change what's needed.
-   This is the ONLY tool that updates the shared state the frontend renders from.
+4. When a chart already exists, PREFER patch_chart for localized changes.
 
 CHART TYPES: bar, line, area, pie, scatter, composed
 
@@ -158,10 +171,9 @@ COLOR PALETTE:
 #36cfc9 (teal), #f759ab (pink)
 
 When asked for sample data, generate realistic data directly in the set_chart call.
-When asked for small changes (e.g. "make it red", "switch to line chart"), reuse
-the current chart data and only change the relevant fields. Keep responses concise.""",
+Keep responses concise.""",
         client=chat_client,
-        tools=[set_chart],
+        tools=[set_chart, patch_chart],
     )
 
     stateful_agent = AgentFrameworkAgent(
