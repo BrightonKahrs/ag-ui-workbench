@@ -114,16 +114,16 @@ async def state_diff_stream(
     async for event in events_gen:
         # --- Track tool call names ---
         if isinstance(event, ToolCallStartEvent):
-            if event.toolCallName == "patch_chart":
-                active_patch_call_id = event.toolCallId
-                logger.info(f"[state-diff] patch_chart started: {event.toolCallId}")
+            if event.tool_call_name == "patch_chart":
+                active_patch_call_id = event.tool_call_id
+                logger.info(f"[state-diff] patch_chart started: {event.tool_call_id}")
             yield event
             continue
 
         # --- After tool result: emit state from store for patch_chart ---
         if isinstance(event, ToolCallResultEvent):
             yield event
-            if active_patch_call_id and event.toolCallId == active_patch_call_id:
+            if active_patch_call_id and event.tool_call_id == active_patch_call_id:
                 # patch_chart completed — read patched state from store
                 patched_state = state_store.get_full_state(thread_id)
                 if patched_state and patched_state != shadow:
