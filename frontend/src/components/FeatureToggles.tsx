@@ -3,7 +3,7 @@ import type { FeatureToggles as Toggles, ModelMode, ReasoningEffort } from "../t
 interface Props {
   toggles: Toggles;
   onChange: (toggles: Toggles) => void;
-  activeTab: "chat" | "state";
+  activeTab: "chat" | "state" | "workflow";
 }
 
 interface ToggleItemProps {
@@ -67,7 +67,7 @@ export default function FeatureToggles({ toggles, onChange, activeTab }: Props) 
               <div className="text-sm font-medium text-white capitalize">{mode}</div>
               <div className="text-xs text-gray-500">
                 {mode === "chat" && "gpt-4.1-mini — standard streaming"}
-                {mode === "reasoning" && "o4-mini — reasoning with 🧠 token tracking"}
+                {mode === "reasoning" && "gpt-5-mini — reasoning with 🧠 thinking block"}
               </div>
             </div>
           </label>
@@ -115,41 +115,42 @@ export default function FeatureToggles({ toggles, onChange, activeTab }: Props) 
           description="Real-time token-by-token text delivery"
           enabled={toggles.streaming}
           onToggle={() => update("streaming")}
+          disabled={activeTab === "workflow"}
         />
         <ToggleItem
           label="Tool Calls"
           description="Show tool call cards with arguments and results"
           enabled={toggles.toolCalls}
           onToggle={() => update("toolCalls")}
-          disabled={activeTab === "state"}
+          disabled={activeTab === "state" || activeTab === "workflow"}
         />
         <ToggleItem
           label="Human-in-the-Loop"
           description="Require approval before tool execution"
           enabled={toggles.humanInTheLoop}
           onToggle={() => update("humanInTheLoop")}
-          disabled={activeTab === "state"}
+          disabled={activeTab === "state" || activeTab === "workflow"}
         />
         <ToggleItem
           label="Shared State"
           description="Bidirectional STATE_SNAPSHOT/STATE_DELTA sync"
           enabled={toggles.sharedState}
           onToggle={() => update("sharedState")}
-          disabled={activeTab === "chat"}
+          disabled={activeTab === "chat" || activeTab === "workflow"}
         />
         <ToggleItem
           label="Predictive Updates"
           description="Optimistic state from streaming tool args"
           enabled={toggles.predictiveUpdates}
           onToggle={() => update("predictiveUpdates")}
-          disabled={activeTab === "chat"}
+          disabled={activeTab === "chat" || activeTab === "workflow"}
         />
         <ToggleItem
           label="Smart Deltas"
           description="Convert STATE_SNAPSHOT → STATE_DELTA when diff is smaller (JSON Patch)"
           enabled={toggles.smartDelta}
           onToggle={() => update("smartDelta")}
-          disabled={activeTab === "chat"}
+          disabled={activeTab === "chat" || activeTab === "workflow"}
         />
         <ToggleItem
           label="Step Events"
@@ -182,6 +183,10 @@ export default function FeatureToggles({ toggles, onChange, activeTab }: Props) 
           <div className="flex items-center gap-2">
             <span className="w-3 h-3 rounded bg-orange-500"></span>
             <span className="text-gray-400">Reasoning</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="w-3 h-3 rounded bg-teal-500"></span>
+            <span className="text-gray-400">Activity</span>
           </div>
           <div className="flex items-center gap-2">
             <span className="w-3 h-3 rounded bg-amber-500"></span>

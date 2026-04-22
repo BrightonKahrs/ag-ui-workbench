@@ -27,6 +27,7 @@ export enum AGUIEventType {
   REASONING_END = "REASONING_END",
   RAW = "RAW",
   CUSTOM = "CUSTOM",
+  ACTIVITY_SNAPSHOT = "ACTIVITY_SNAPSHOT",
 }
 
 // --- Event Interfaces ---
@@ -162,6 +163,16 @@ export interface ReasoningEndEvent {
   messageId: string;
 }
 
+// --- Activity Events ---
+
+export interface ActivitySnapshotEvent {
+  type: AGUIEventType.ACTIVITY_SNAPSHOT;
+  messageId: string;
+  activityType: string;
+  content: Record<string, unknown>;
+  replace?: boolean;
+}
+
 // --- JSON Patch (RFC 6902) ---
 
 export interface JsonPatchOperation {
@@ -195,7 +206,8 @@ export type AGUIEvent =
   | ReasoningMessageEndEvent
   | ReasoningEndEvent
   | RawEvent
-  | CustomEvent;
+  | CustomEvent
+  | ActivitySnapshotEvent;
 
 // --- Timestamped Event (for the inspector) ---
 

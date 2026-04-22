@@ -45,10 +45,26 @@ export interface PendingApproval {
   steps: Array<{ description: string; status: string }>;
 }
 
+export interface ActivityItem {
+  executorId: string;
+  status: "in_progress" | "completed" | "failed";
+  data?: unknown;
+  details?: string;
+  timestamp: number;
+}
+
+export interface StepItem {
+  name: string;
+  status: "started" | "finished";
+  timestamp: number;
+}
+
 interface UseAgentStreamReturn {
   messages: ChatMessage[];
   toolCalls: ToolCall[];
   events: TimestampedEvent[];
+  activities: ActivityItem[];
+  steps: StepItem[];
   isRunning: boolean;
   error: string | null;
   pendingApproval: PendingApproval | null;
@@ -68,6 +84,8 @@ export function useAgentStream(
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [toolCalls, setToolCalls] = useState<ToolCall[]>([]);
   const [events, setEvents] = useState<TimestampedEvent[]>([]);
+  const [activities, setActivities] = useState<ActivityItem[]>([]);
+  const [steps, setSteps] = useState<StepItem[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
@@ -115,7 +133,7 @@ export function useAgentStream(
       let reasoningMessageId: string | null = null;
       let reasoningContent = "";
 
-      const url = `/api/chat`;
+      const url = `/api${_endpoint}`;
 
       await streamAgentResponse(url, request, {
         signal: abortController.signal,
@@ -323,6 +341,49 @@ export function useAgentStream(
               break;
             }
 
+            case AGUIEventType.STEP_STARTED: {
+              setSteps((prev) => [
+                ...prev,
+                { name: event.stepName, status: "started", timestamp: Date.now() },
+              ]);
+              break;
+            }
+
+            case AGUIEventType.STEP_FINISHED: {
+              setSteps((prev) => [
+                ...prev,
+                { name: event.stepName, status: "finished", timestamp: Date.now() },
+              ]);
+              break;
+            }
+
+            case AGUIEventType.ACTIVITY_SNAPSHOT: {
+              const content = event.content as Record<string, unknown>;
+              const executorId = (content?.executor_id as string) ?? event.activityType;
+              const status = (content?.status as ActivityItem["status"]) ?? "in_progress";
+              setActivities((prev) => {
+                // Replace existing entry for this executor, or add new
+                const idx = prev.findIndex((a) => a.executorId === executorId && a.status === "in_progress");
+                const item: ActivityItem = {
+                  executorId,
+                  status,
+                  data: content?.data,
+                  details: content?.details as string | undefined,
+                  timestamp: Date.now(),
+                };
+                if (idx >= 0 && status !== "in_progress") {
+                  return [...prev.slice(0, idx), item, ...prev.slice(idx + 1)];
+                }
+                return [...prev, item];
+              });
+              break;
+            }
+
+            case AGUIEventType.REASONING_MESSAGE_START: {
+              // Inner message boundary — REASONING_START already created the message
+              break;
+            }
+
             case AGUIEventType.REASONING_START: {
               // Create a placeholder assistant message for reasoning
               reasoningMessageId = event.messageId;
@@ -479,6 +540,8 @@ export function useAgentStream(
   const clearMessages = useCallback(() => {
     setMessages([]);
     setToolCalls([]);
+    setActivities([]);
+    setSteps([]);
     conversationRef.current = [];
     messagesSnapshotRef.current = null;
     threadIdRef.current = null;
@@ -501,6 +564,8 @@ export function useAgentStream(
     messages,
     toolCalls,
     events,
+    activities,
+    steps,
     isRunning,
     error,
     pendingApproval,

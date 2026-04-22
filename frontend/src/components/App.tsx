@@ -1,12 +1,13 @@
 import { useState } from "react";
 import ChatTab from "./ChatTab";
 import SharedStateTab from "./SharedStateTab";
+import WorkflowTab from "./WorkflowTab";
 import EventInspector from "./EventInspector";
 import FeatureToggles from "./FeatureToggles";
 import type { FeatureToggles as Toggles, TimestampedEvent } from "../types/ag-ui";
 import { DEFAULT_TOGGLES } from "../types/ag-ui";
 
-type Tab = "chat" | "state";
+type Tab = "chat" | "state" | "workflow";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>("chat");
@@ -47,6 +48,16 @@ export default function App() {
             >
               🔄 Shared State
             </button>
+            <button
+              onClick={() => setActiveTab("workflow")}
+              className={`px-4 py-1.5 rounded text-sm font-medium transition-colors ${
+                activeTab === "workflow"
+                  ? "bg-purple-600 text-white"
+                  : "text-gray-400 hover:text-white"
+              }`}
+            >
+              🔬 Workflow
+            </button>
           </div>
           {/* Inspector Toggle */}
           <button
@@ -73,8 +84,10 @@ export default function App() {
         <main className="flex-1 flex flex-col overflow-hidden">
           {activeTab === "chat" ? (
             <ChatTab toggles={toggles} onEvents={setInspectorEvents} />
-          ) : (
+          ) : activeTab === "state" ? (
             <SharedStateTab onEvents={setInspectorEvents} toggles={toggles} />
+          ) : (
+            <WorkflowTab toggles={toggles} onEvents={setInspectorEvents} />
           )}
         </main>
 

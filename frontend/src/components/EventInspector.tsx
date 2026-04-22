@@ -14,6 +14,7 @@ function getCategoryPrefix(type: string): string {
   if (type.startsWith("STATE_")) return "STATE";
   if (type.startsWith("STEP_")) return "STEP";
   if (type.startsWith("REASONING")) return "REASONING";
+  if (type.startsWith("ACTIVITY")) return "ACTIVITY";
   if (type.startsWith("RUN_")) return "RUN";
   return type; // CUSTOM, RAW, MESSAGES_SNAPSHOT etc. stay as-is
 }
@@ -25,6 +26,7 @@ function getCategoryColor(cat: string): string {
     case "TOOL_CALL": return "text-yellow-400 bg-yellow-950 border-yellow-900";
     case "STATE": return "text-purple-400 bg-purple-950 border-purple-900";
     case "STEP": return "text-cyan-400 bg-cyan-950 border-cyan-900";
+    case "ACTIVITY": return "text-teal-400 bg-teal-950 border-teal-900";
     case "REASONING": return "text-orange-400 bg-orange-950 border-orange-900";
     default: return "text-gray-400 bg-gray-800 border-gray-700";
   }
@@ -41,6 +43,7 @@ function getCategoryIcon(cat: string): string {
     case "TOOL_CALL": return "🔧";
     case "STATE": return "📸";
     case "STEP": return "👣";
+    case "ACTIVITY": return "📊";
     case "REASONING": return "🧠";
     case "CUSTOM": return "⚡";
     default: return "📡";
@@ -69,6 +72,7 @@ function getEventIcon(type: string): string {
     case AGUIEventType.REASONING_MESSAGE_END: return "🎯";
     case AGUIEventType.REASONING_END: return "🧠";
     case AGUIEventType.CUSTOM: return "⚡";
+    case AGUIEventType.ACTIVITY_SNAPSHOT: return "📊";
     default: return "📡";
   }
 }
@@ -120,6 +124,15 @@ function getEventSummary(event: TimestampedEvent["event"]): string {
     }
     case AGUIEventType.CUSTOM:
       return `${event.name}: ${JSON.stringify(event.value).slice(0, 50)}`;
+    case AGUIEventType.ACTIVITY_SNAPSHOT: {
+      const content = event.content as Record<string, unknown>;
+      const status = content?.status ?? "";
+      return `${event.activityType}: ${status}`;
+    }
+    case AGUIEventType.STEP_STARTED:
+      return `→ ${event.stepName}`;
+    case AGUIEventType.STEP_FINISHED:
+      return `✓ ${event.stepName}`;
     default:
       return "";
   }

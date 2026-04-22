@@ -33,9 +33,11 @@ from ag_ui.encoder import EventEncoder
 from agent_framework import MCPStreamableHTTPTool
 from agent_framework_ag_ui._agent import AgentConfig
 from agent_framework_ag_ui._agent_run import run_agent_stream
+from agent_framework_ag_ui._workflow_run import run_workflow_stream
 from agent_framework_ag_ui._types import AGUIRequest
 from agents.chat_agent import create_chat_agent
 from agents.stateful_agent import create_stateful_agent
+from agents.workflow_agent import create_workflow
 
 import state_store
 
@@ -420,12 +422,69 @@ async def stateful_endpoint(request_body: AGUIRequest) -> StreamingResponse:
     )
 
 
+@app.post("/workflow", tags=["AG-UI"])
+async def workflow_endpoint(request_body: AGUIRequest) -> StreamingResponse:
+    """Workflow endpoint demonstrating STEP and ACTIVITY_SNAPSHOT events.
+
+    Runs a 3-stage Research Pipeline (Researcher → Analyzer → Synthesizer).
+    Each stage transition emits STEP_STARTED/STEP_FINISHED and ACTIVITY_SNAPSHOT.
+    """
+    input_data = request_body.model_dump(exclude_none=True)
+
+    logger.info(
+        f"[/workflow] messages={len(input_data.get('messages', []))}"
+    )
+
+    # Fresh workflow per request (stateless)
+    workflow = create_workflow()
+    encoder = EventEncoder()
+
+    async def event_generator() -> AsyncGenerator[str]:
+        event_count = 0
+        try:
+            async for event in run_workflow_stream(input_data, workflow):
+                event_count += 1
+                event_type_name = getattr(event, "type", type(event).__name__)
+                if any(k in str(event_type_name) for k in ("STEP", "ACTIVITY", "RUN")):
+                    logger.info(f"[/workflow] Event {event_count}: {event_type_name}")
+                try:
+                    yield encoder.encode(event)
+                except Exception as encode_error:
+                    logger.exception("[/workflow] Failed to encode event %s", event_type_name)
+                    from ag_ui.core import RunErrorEvent
+                    try:
+                        yield encoder.encode(RunErrorEvent(
+                            message="Internal error while streaming events.",
+                            code=type(encode_error).__name__,
+                        ))
+                    except Exception:
+                        pass
+                    return
+            logger.info(f"[/workflow] Completed streaming {event_count} events")
+        except Exception:
+            logger.exception("[/workflow] Streaming failed")
+            from ag_ui.core import RunErrorEvent
+            try:
+                yield encoder.encode(RunErrorEvent(
+                    message="Internal error while streaming events.",
+                    code="StreamError",
+                ))
+            except Exception:
+                pass
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+    )
+
+
 @app.get("/health")
 async def health():
     """Health check endpoint."""
     return {
         "status": "ok",
-        "agents": ["/chat", "/state"],
+        "agents": ["/chat", "/state", "/workflow"],
         "models": {
             "chat": os.environ.get("FOUNDRY_MODEL_CHAT", "gpt-4.1-mini"),
             "reasoning": os.environ.get("FOUNDRY_MODEL_REASONING", "o4-mini"),
