@@ -12,17 +12,23 @@ AG-UI is an open, event-based protocol that standardizes how AI agents stream re
 
 ## Features Demonstrated
 
-| Feature | AG-UI Events | Tab |
-|---------|-------------|-----|
-| Streaming Chat | `TEXT_MESSAGE_START/CONTENT/END` | Chat |
-| Tool Calls | `TOOL_CALL_START/ARGS/END/RESULT` | Chat |
-| MCP Server Tools | `TOOL_CALL_*` (via MCP) | Chat |
-| Reasoning Tokens | `CUSTOM` (usage with `openai.reasoning_tokens`) | Chat |
-| Shared State | `STATE_SNAPSHOT`, `STATE_DELTA` | State |
-| Predictive Updates | Streaming tool args → state | State |
-| Data Visualization | Live Recharts from shared state | State |
-| Step Tracking | `STEP_STARTED/STEP_FINISHED` | Both |
-| Event Observability | Collapsible grouped events in inspector | Both |
+| Feature | AG-UI Events | Tab | Toggle |
+|---------|-------------|-----|--------|
+| Streaming Chat | `TEXT_MESSAGE_START/CONTENT/END` | Chat | `streaming` |
+| Tool Calls | `TOOL_CALL_START/ARGS/END/RESULT` | Chat | `toolCalls` |
+| MCP Server Tools | `TOOL_CALL_*` (via MCP) | Chat | `toolCalls` |
+| Human-in-the-Loop | `TOOL_CALL_END` → `confirm_changes` + `RUN_FINISHED(interrupt)` | Chat | `humanInTheLoop` |
+| Reasoning | `REASONING_START/MESSAGE_START/CONTENT/END/MESSAGE_END/END` | Chat | `modelMode: reasoning` |
+| Reasoning Token Badge | `CUSTOM(usage)` with `openai.reasoning_tokens` | Chat | `modelMode: reasoning` |
+| Shared State | `STATE_SNAPSHOT`, `STATE_DELTA` | State | `sharedState` |
+| Smart Deltas | `STATE_DELTA` (JSON Patch, RFC 6902) | State | `smartDelta` |
+| Predictive Updates | Streaming tool args → state | State | `predictiveUpdates` |
+| Data Visualization | Live Recharts from shared state | State | `sharedState` |
+| Step Tracking | `STEP_STARTED/STEP_FINISHED` | Both | `stepEvents` |
+| Event Observability | All events in collapsible grouped inspector | Both | — |
+
+> **21 of 25 non-deprecated AG-UI event types** are handled by this playground (84% coverage).
+> See [docs/ag-ui-event-reference.md](docs/ag-ui-event-reference.md) for the full protocol analysis.
 
 ## Architecture
 
@@ -32,6 +38,8 @@ AG-UI is an open, event-based protocol that standardizes how AI agents stream re
 │  ┌──────────┐ ┌──────────┐ ┌─────────────┐  │
 │  │ Chat Tab │ │State Tab │ │Event Inspector│ │
 │  │ + tools  │ │ + charts │ │ (grouped)    │  │
+│  │ + HITL   │ │ + deltas │ │              │  │
+│  │ + reason │ │          │ │              │  │
 │  └─────┬────┘ └─────┬────┘ └─────────────┘  │
 │        │ Raw SSE     │                        │
 │        │ (fetch API) │                        │
@@ -40,22 +48,24 @@ AG-UI is an open, event-based protocol that standardizes how AI agents stream re
          ▼
 ┌──────────────────────────────────────────────┐
 │  Python Backend (FastAPI) :8888              │
-│  ┌─────────┐ ┌───────────┐ ┌──────────────┐ │
-│  │ /chat   │ │/reasoning │ │ /state       │ │
-│  │ +local  │ │ o4-mini   │ │ DataVizAgent │ │
-│  │ +MCP    │ │ +🧠tokens │ │ +Recharts    │ │
-│  └────┬────┘ └─────┬─────┘ └──────┬───────┘ │
-│       └─────┬──────┘               │         │
-│             ▼                      │         │
-│   agent-framework-ag-ui           │         │
-│   (SSE event bridge)              │         │
-└──────┬──────────────────────┬─────┘─────────┘
+│  ┌─────────────────┐  ┌──────────────────┐  │
+│  │ /chat            │  │ /state           │  │
+│  │ ChatAgent        │  │ DataVizAgent     │  │
+│  │ +local tools     │  │ +Recharts tools  │  │
+│  │ +MCP tools       │  │ +state_diff_stream│ │
+│  │ +HITL approval   │  │ +predict_state   │  │
+│  └────┬─────────────┘  └──────┬───────────┘  │
+│       └─────┬──────────────────┘              │
+│             ▼                                 │
+│   agent-framework-ag-ui                       │
+│   (SSE event bridge)                          │
+└──────┬──────────────────────┬────────────────┘
        │                      │
        ▼                      ▼
 ┌──────────────┐    ┌──────────────────┐
 │ MCP Server   │    │ Azure AI Foundry │
 │ :8889        │    │ gpt-4.1-mini     │
-│ (FastMCP)    │    │ o4-mini          │
+│ (FastMCP)    │    │ gpt-5-mini       │
 └──────────────┘    └──────────────────┘
 ```
 
@@ -80,7 +90,7 @@ Edit `.env` with your Foundry endpoint and model deployment names:
 ```env
 FOUNDRY_PROJECT_ENDPOINT=https://your-resource.services.ai.azure.com/
 FOUNDRY_MODEL_CHAT=gpt-4.1-mini
-FOUNDRY_MODEL_REASONING=o4-mini
+FOUNDRY_MODEL_REASONING=gpt-5-mini
 ```
 
 ### 2. Install Dependencies
@@ -144,8 +154,10 @@ Click any group to expand (first 5 shown, then "Show all N"). Click any event fo
 ### Model Modes
 
 Toggle between models in the left sidebar:
-- **Chat** (`gpt-4.1-mini`) — standard streaming
-- **Reasoning** (`o4-mini`) — reasoning model with 🧠 token badge on messages
+- **Chat** (`gpt-4.1-mini`) — standard streaming with tool calls
+- **Reasoning** (`gpt-5-mini`) — native reasoning events with 🧠 collapsible thinking block and token badge
+
+The reasoning model uses `reasoning.summary: "auto"` to stream readable reasoning summaries as `REASONING_*` events before the final response.
 
 ### MCP Server Integration
 
@@ -157,6 +169,17 @@ The local MCP server (`mcp_server.py`) provides tools via the Model Context Prot
 
 These appear as standard `TOOL_CALL` events in the inspector, demonstrating MCP's role in the agentic stack.
 
+### Human-in-the-Loop (HITL) Approval
+
+Enable the **Human-in-the-Loop** toggle to require approval before tool execution:
+1. Agent decides to call a tool → framework emits `CUSTOM(function_approval_request)`
+2. Backend wraps the call in a `confirm_changes` pseudo-tool
+3. Frontend shows an amber approval dialog with the function name, arguments, and step descriptions
+4. User clicks **Approve** or **Reject** → resume request sent with interrupt response
+5. `RUN_FINISHED` includes `interrupt` array when waiting for approval
+
+This demonstrates the full AG-UI interrupt/resume pattern.
+
 ### Shared State & Data Visualization
 
 The **State** tab demonstrates bidirectional state sync:
@@ -167,26 +190,32 @@ The **State** tab demonstrates bidirectional state sync:
 
 ## AG-UI Event Types Reference
 
-```typescript
-enum AGUIEventType {
-  // Lifecycle
-  RUN_STARTED, RUN_FINISHED, RUN_ERROR,
-  STEP_STARTED, STEP_FINISHED,
+The AG-UI spec defines 33 event types. This playground handles 21 of the 25 non-deprecated types:
 
-  // Text Messages (streaming)
-  TEXT_MESSAGE_START, TEXT_MESSAGE_CONTENT, TEXT_MESSAGE_END,
-
-  // Tool Calls
-  TOOL_CALL_START, TOOL_CALL_ARGS, TOOL_CALL_END, TOOL_CALL_RESULT,
-
-  // State Management
-  STATE_SNAPSHOT,  // Full state replacement
-  STATE_DELTA,     // JSON Patch (RFC 6902) incremental update
-
-  // Other
-  MESSAGES_SNAPSHOT, CUSTOM, RAW
-}
 ```
+LIFECYCLE (3)     ✅ RUN_STARTED, RUN_FINISHED, RUN_ERROR
+STEPS (2)         ✅ STEP_STARTED, STEP_FINISHED
+
+TEXT (3+1)        ✅ TEXT_MESSAGE_START, TEXT_MESSAGE_CONTENT, TEXT_MESSAGE_END
+                  — TEXT_MESSAGE_CHUNK (convenience, not used)
+
+TOOLS (4+1)       ✅ TOOL_CALL_START, TOOL_CALL_ARGS, TOOL_CALL_END, TOOL_CALL_RESULT
+                  — TOOL_CALL_CHUNK (convenience, not used)
+
+STATE (3)         ✅ STATE_SNAPSHOT, STATE_DELTA, MESSAGES_SNAPSHOT
+
+REASONING (6+1)   ✅ REASONING_START, REASONING_MESSAGE_START, REASONING_MESSAGE_CONTENT,
+                     REASONING_MESSAGE_END, REASONING_END
+                  ⚙️ REASONING_ENCRYPTED_VALUE (requires ZDR endpoint)
+                  — REASONING_MESSAGE_CHUNK (convenience, not used)
+
+ACTIVITY (2)      ❌ ACTIVITY_SNAPSHOT, ACTIVITY_DELTA (workflow-only, not demonstrated)
+
+SPECIAL (2)       ✅ CUSTOM (usage, approval, PredictState)
+                  — RAW (type defined, not actively used)
+```
+
+For a complete deep dive, see **[docs/ag-ui-event-reference.md](docs/ag-ui-event-reference.md)** — includes framework implementation details, event lifecycles, payload schemas, and coverage gap analysis.
 
 ## Key Files
 
