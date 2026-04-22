@@ -36,6 +36,7 @@ from agent_framework_ag_ui._agent_run import run_agent_stream
 from agent_framework_ag_ui._workflow_run import run_workflow_stream
 from agent_framework_ag_ui._types import AGUIRequest
 from agents.chat_agent import create_chat_agent
+from agents.plan_agent import create_plan_agent
 from agents.stateful_agent import create_stateful_agent
 from agents.workflow_agent import create_workflow
 
@@ -52,6 +53,13 @@ mcp_tool: MCPStreamableHTTPTool | None = None
 pending_approvals: OrderedDict[str, str] = OrderedDict()
 
 # --- State Diff Middleware ---
+
+
+def _sync_state_store(state: dict[str, Any], thread_id: str) -> None:
+    """Sync known namespaces from a state snapshot to state_store."""
+    for ns in ("chart", "plan"):
+        if ns in state and state[ns] is not None:
+            state_store.store_state(ns, state[ns], thread_id)
 
 
 def _normalize_state(state: dict[str, Any]) -> dict[str, Any]:
@@ -109,45 +117,46 @@ async def state_diff_stream(
     # (framework's full /key replaces during set_chart streaming)
     suppress_predictive = use_smart_delta and bool(shadow)
 
-    # Track patch_chart tool calls
-    active_patch_call_id: str | None = None
+    # Track tool calls that modify state_store directly (no predict_state_config)
+    _STORE_MUTATING_TOOLS = {"patch_chart", "create_plan", "update_task"}
+    active_store_call_id: str | None = None
     suppress_next_snapshot = False
 
     async for event in events_gen:
         # --- Track tool call names ---
         if isinstance(event, ToolCallStartEvent):
-            if event.tool_call_name == "patch_chart":
-                active_patch_call_id = event.tool_call_id
-                logger.info(f"[state-diff] patch_chart started: {event.tool_call_id}")
+            if event.tool_call_name in _STORE_MUTATING_TOOLS:
+                active_store_call_id = event.tool_call_id
+                logger.info(f"[state-diff] {event.tool_call_name} started: {event.tool_call_id}")
             yield event
             continue
 
-        # --- After tool result: emit state from store for patch_chart ---
+        # --- After tool result: emit state from store for store-mutating tools ---
         if isinstance(event, ToolCallResultEvent):
             yield event
-            if active_patch_call_id and event.tool_call_id == active_patch_call_id:
-                # patch_chart completed — read patched state from store
-                patched_state = state_store.get_full_state(thread_id)
-                if patched_state and patched_state != shadow:
+            if active_store_call_id and event.tool_call_id == active_store_call_id:
+                # Tool completed — read updated state from store
+                updated_state = state_store.get_full_state(thread_id)
+                if updated_state and updated_state != shadow:
                     if use_smart_delta and shadow:
                         try:
-                            patch = jsonpatch.make_patch(shadow, patched_state)
+                            patch = jsonpatch.make_patch(shadow, updated_state)
                             ops = list(patch)
                             if ops:
                                 logger.info(
-                                    f"[state-diff] patch_chart: emitting {len(ops)} "
+                                    f"[state-diff] store-tool: emitting {len(ops)} "
                                     f"delta ops from state_store"
                                 )
                                 yield StateDeltaEvent(delta=ops)
                         except Exception:
-                            yield StateSnapshotEvent(snapshot=patched_state)
+                            yield StateSnapshotEvent(snapshot=updated_state)
                     else:
-                        yield StateSnapshotEvent(snapshot=patched_state)
-                    shadow = copy.deepcopy(patched_state)
+                        yield StateSnapshotEvent(snapshot=updated_state)
+                    shadow = copy.deepcopy(updated_state)
                 suppress_next_snapshot = True
-                active_patch_call_id = None
+                active_store_call_id = None
             else:
-                # Non-patch tool result: don't suppress next snapshot
+                # Non-store tool result: don't suppress next snapshot
                 suppress_next_snapshot = False
             continue
 
@@ -190,9 +199,7 @@ async def state_diff_stream(
                         )
                         yield StateDeltaEvent(delta=ops)
                         shadow = copy.deepcopy(normalized)
-                        # Sync state_store from framework snapshot
-                        if "chart" in normalized:
-                            state_store.store_chart(normalized["chart"], thread_id)
+                        _sync_state_store(normalized, thread_id)
                         continue
                 except Exception as e:
                     logger.warning(
@@ -202,9 +209,7 @@ async def state_diff_stream(
             # Emit normalized snapshot
             yield StateSnapshotEvent(snapshot=normalized)
             shadow = copy.deepcopy(normalized)
-            # Sync state_store from framework snapshot
-            if "chart" in normalized:
-                state_store.store_chart(normalized["chart"], thread_id)
+            _sync_state_store(normalized, thread_id)
 
         else:
             yield event
@@ -406,6 +411,93 @@ async def stateful_endpoint(request_body: AGUIRequest) -> StreamingResponse:
             logger.info(f"[/state] Completed streaming {event_count} events")
         except Exception:
             logger.exception("[/state] Streaming failed")
+            from ag_ui.core import RunErrorEvent
+            try:
+                yield encoder.encode(RunErrorEvent(
+                    message="Internal error while streaming events.",
+                    code="StreamError",
+                ))
+            except Exception:
+                pass
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.post("/plan", tags=["AG-UI"])
+async def plan_endpoint(request_body: AGUIRequest) -> StreamingResponse:
+    """Plan endpoint — creates and tracks task plans via shared state.
+
+    Uses STATE_SNAPSHOT/STATE_DELTA to sync plan state to the frontend.
+    The agent creates plans with create_plan and updates tasks with update_task.
+    """
+    input_data = request_body.model_dump(exclude_none=True)
+
+    thread_id = input_data.get("thread_id") or input_data.get("threadId") or "default"
+    request_state = input_data.get("state")
+
+    logger.info(
+        f"[/plan] thread={thread_id[:8]}, "
+        f"messages={len(input_data.get('messages', []))}"
+    )
+
+    # Seed state_store from client state
+    if request_state:
+        normalized = _normalize_state(copy.deepcopy(request_state))
+        for ns in ("plan",):
+            if ns in normalized and isinstance(normalized[ns], dict):
+                state_store.store_state(ns, normalized[ns], thread_id)
+
+    # Ensure state is non-empty (framework bug workaround — same as /state)
+    if not input_data.get("state"):
+        input_data["state"] = {"plan": None}
+
+    agent = create_plan_agent(mcp_tools=mcp_tool)
+    # No predict_state_config — plan tools write directly to state_store.
+    # The middleware reads from state_store after each tool call and emits
+    # STATE_SNAPSHOT/STATE_DELTA. This avoids the shape mismatch between
+    # the LLM's array-based plan_json and our map-based state_store format.
+    config = AgentConfig()
+
+    encoder = EventEncoder()
+
+    async def event_generator() -> AsyncGenerator[str]:
+        token = state_store.set_active_thread(thread_id)
+        event_count = 0
+        raw_events = run_agent_stream(input_data, agent, config)
+
+        processed_events = state_diff_stream(
+            raw_events,
+            thread_id=thread_id,
+            request_state=request_state,
+            use_smart_delta=True,
+        )
+
+        try:
+            async for event in processed_events:
+                event_count += 1
+                event_type_name = getattr(event, "type", type(event).__name__)
+                if any(k in str(event_type_name) for k in ("STATE", "RUN", "TOOL")):
+                    logger.info(f"[/plan] Event {event_count}: {event_type_name}")
+                try:
+                    yield encoder.encode(event)
+                except Exception as encode_error:
+                    logger.exception("[/plan] Failed to encode event %s", event_type_name)
+                    from ag_ui.core import RunErrorEvent
+                    try:
+                        yield encoder.encode(RunErrorEvent(
+                            message="Internal error while streaming events.",
+                            code=type(encode_error).__name__,
+                        ))
+                    except Exception:
+                        pass
+                    return
+            logger.info(f"[/plan] Completed streaming {event_count} events")
+        except Exception:
+            logger.exception("[/plan] Streaming failed")
             from ag_ui.core import RunErrorEvent
             try:
                 yield encoder.encode(RunErrorEvent(

@@ -3,7 +3,7 @@ import type { FeatureToggles as Toggles, ModelMode, ReasoningEffort } from "../t
 interface Props {
   toggles: Toggles;
   onChange: (toggles: Toggles) => void;
-  activeTab: "chat" | "state" | "workflow";
+  activeTab: "chat" | "plan" | "state" | "workflow";
 }
 
 interface ToggleItemProps {
@@ -122,14 +122,14 @@ export default function FeatureToggles({ toggles, onChange, activeTab }: Props) 
           description="Show tool call cards with arguments and results"
           enabled={toggles.toolCalls}
           onToggle={() => update("toolCalls")}
-          disabled={activeTab === "state" || activeTab === "workflow"}
+          disabled={activeTab === "state" || activeTab === "plan" || activeTab === "workflow"}
         />
         <ToggleItem
           label="Human-in-the-Loop"
           description="Require approval before tool execution"
           enabled={toggles.humanInTheLoop}
           onToggle={() => update("humanInTheLoop")}
-          disabled={activeTab === "state" || activeTab === "workflow"}
+          disabled={activeTab === "state" || activeTab === "plan" || activeTab === "workflow"}
         />
         <ToggleItem
           label="Shared State"
@@ -143,7 +143,7 @@ export default function FeatureToggles({ toggles, onChange, activeTab }: Props) 
           description="Optimistic state from streaming tool args"
           enabled={toggles.predictiveUpdates}
           onToggle={() => update("predictiveUpdates")}
-          disabled={activeTab === "chat" || activeTab === "workflow"}
+          disabled={activeTab === "chat" || activeTab === "plan" || activeTab === "workflow"}
         />
         <ToggleItem
           label="Smart Deltas"
