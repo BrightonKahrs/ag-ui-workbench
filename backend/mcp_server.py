@@ -6,7 +6,6 @@ Run separately: `uv run python mcp_server.py`
 The chat agent connects to this via MCPStreamableHTTPTool at /mcp.
 """
 
-import html
 import json
 import math
 import random
@@ -332,9 +331,18 @@ def visualize_statistics_app(numbers: list[float], label: str = "Dataset") -> st
 
 # ---------- HTML Generators for MCP App Tools ----------
 
+def _safe_js_json(data: dict) -> str:
+    """Serialize data as JSON safe for embedding in a <script> tag.
+
+    JSON is valid JS, so we embed it directly (no JSON.parse wrapper).
+    Only need to escape </script> to prevent premature tag closing.
+    """
+    return json.dumps(data).replace("</", r"<\/")
+
+
 def _generate_dataset_explorer_html(data: dict) -> str:
     """Generate self-contained HTML for the dataset explorer app."""
-    data_json = html.escape(json.dumps(data), quote=True)
+    data_json = _safe_js_json(data)
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -373,7 +381,7 @@ def _generate_dataset_explorer_html(data: dict) -> str:
 </div>
 <table><thead><tr id="header"></tr></thead><tbody id="tbody"></tbody></table>
 <script>
-const DATA = JSON.parse('{data_json}');
+const DATA = {data_json};
 let sortCol = null, sortAsc = true;
 const nameEl = document.getElementById('name');
 const countEl = document.getElementById('count');
@@ -441,7 +449,7 @@ render();
 
 def _generate_statistics_dashboard_html(data: dict) -> str:
     """Generate self-contained HTML for the statistics dashboard app."""
-    data_json = html.escape(json.dumps(data), quote=True)
+    data_json = _safe_js_json(data)
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -484,7 +492,7 @@ def _generate_statistics_dashboard_html(data: dict) -> str:
   <div class="dot-plot" id="dots"></div>
 </div>
 <script>
-const D = JSON.parse('{data_json}');
+const D = {data_json};
 document.getElementById('label').textContent = D.label + ' (' + D.count + ' values)';
 
 const statsEl = document.getElementById('stats');
