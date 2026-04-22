@@ -25,8 +25,6 @@ from fastapi.responses import StreamingResponse
 
 from ag_ui.core import (
     CustomEvent,
-    RunFinishedEvent,
-    RunStartedEvent,
     StateDeltaEvent,
     StateSnapshotEvent,
     ToolCallArgsEvent,
@@ -142,22 +140,6 @@ async def mcp_app_stream(
             continue
 
         yield event
-
-
-async def _patch_thread_id(
-    events_gen: AsyncGenerator, stable_thread_id: str,
-) -> AsyncGenerator:
-    """Patch RUN_STARTED/RUN_FINISHED events to use the client-supplied threadId.
-
-    Agent Framework replaces threadId with the Foundry conversation ID on each
-    API call. This middleware restores the stable threadId so the frontend sees
-    a consistent thread across the entire chat session.
-    """
-    async for event in events_gen:
-        if isinstance(event, (RunStartedEvent, RunFinishedEvent)):
-            yield event.model_copy(update={"thread_id": stable_thread_id})
-        else:
-            yield event
 
 
 def _sync_state_store(state: dict[str, Any], thread_id: str) -> None:
@@ -386,24 +368,17 @@ async def dynamic_chat_endpoint(request_body: AGUIRequest) -> StreamingResponse:
         mcp_tools=mcp_tool,
         reasoning_effort=reasoning_effort,
     )
-    config = AgentConfig(require_confirmation=hitl)
+    config = AgentConfig(require_confirmation=hitl, use_service_session=True)
     encoder = EventEncoder()
 
     async def event_generator() -> AsyncGenerator[str]:
         event_count = 0
-        # Stable threadId from the client (frontend generates thread-{uuid})
-        stable_tid = (
-            input_data.get("thread_id")
-            or input_data.get("threadId")
-            or f"thread-{id(input_data)}"
-        )
         raw_events = run_agent_stream(
             input_data, base_agent, config,
             pending_approvals=pending_approvals if hitl else None,
         )
-        # Pipeline: raw → patch threadId → MCP App detection
-        patched = _patch_thread_id(raw_events, stable_tid)
-        events_with_apps = mcp_app_stream(patched)
+        # Wrap with MCP App middleware to detect app tool results
+        events_with_apps = mcp_app_stream(raw_events)
         try:
             async for event in events_with_apps:
                 event_count += 1
@@ -485,6 +460,7 @@ async def stateful_endpoint(request_body: AGUIRequest) -> StreamingResponse:
     base_agent = stateful_agent_wrapper.agent
     config = AgentConfig(
         predict_state_config=stateful_agent_wrapper.config.predict_state_config,
+        use_service_session=True,
     )
 
     encoder = EventEncoder()
@@ -494,11 +470,10 @@ async def stateful_endpoint(request_body: AGUIRequest) -> StreamingResponse:
         token = state_store.set_active_thread(thread_id)
         event_count = 0
         raw_events = run_agent_stream(input_data, base_agent, config)
-        patched_events = _patch_thread_id(raw_events, thread_id)
 
         # Wrap through state diff middleware
         processed_events = state_diff_stream(
-            patched_events,
+            raw_events,
             thread_id=thread_id,
             request_state=request_state,
             use_smart_delta=smart_delta,
@@ -575,7 +550,7 @@ async def plan_endpoint(request_body: AGUIRequest) -> StreamingResponse:
     # The middleware reads from state_store after each tool call and emits
     # STATE_SNAPSHOT/STATE_DELTA. This avoids the shape mismatch between
     # the LLM's array-based plan_json and our map-based state_store format.
-    config = AgentConfig()
+    config = AgentConfig(use_service_session=True)
 
     encoder = EventEncoder()
 
@@ -583,10 +558,9 @@ async def plan_endpoint(request_body: AGUIRequest) -> StreamingResponse:
         token = state_store.set_active_thread(thread_id)
         event_count = 0
         raw_events = run_agent_stream(input_data, agent, config)
-        patched_events = _patch_thread_id(raw_events, thread_id)
 
         processed_events = state_diff_stream(
-            patched_events,
+            raw_events,
             thread_id=thread_id,
             request_state=request_state,
             use_smart_delta=True,

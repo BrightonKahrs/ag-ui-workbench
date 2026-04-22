@@ -153,9 +153,10 @@ export function useAgentStream(
 
           switch (event.type) {
             case AGUIEventType.RUN_STARTED: {
-              // Only capture threadId if we don't already have one —
-              // the backend may replace our stable ID with its own.
-              if (event.threadId && !threadIdRef.current) {
+              // Always capture threadId from Foundry — it's the source of truth.
+              // With use_service_session=True, Foundry returns a stable conversation
+              // ID when we send the same threadId back on subsequent calls.
+              if (event.threadId) {
                 threadIdRef.current = event.threadId;
               }
               break;
@@ -489,12 +490,10 @@ export function useAgentStream(
 
       const request: AGUIRunRequest = {
         messages: conversationRef.current,
-        threadId: threadIdRef.current || (() => {
-          // Generate a stable thread ID on first message in this session
-          const id = `thread-${crypto.randomUUID()}`;
-          threadIdRef.current = id;
-          return id;
-        })(),
+        // First call: no threadId → Foundry creates a new conversation.
+        // Subsequent calls: send Foundry's conversation ID back so it
+        // continues the same conversation (use_service_session=True).
+        ...(threadIdRef.current ? { threadId: threadIdRef.current } : {}),
         forwardedProps: buildForwardedProps(),
       };
 
@@ -543,7 +542,7 @@ export function useAgentStream(
 
       const request: AGUIRunRequest = {
         messages: msgs,
-        threadId: threadIdRef.current || `thread-${crypto.randomUUID()}`,
+        ...(threadIdRef.current ? { threadId: threadIdRef.current } : {}),
         forwardedProps: buildForwardedProps(),
         resume: {
           interrupts: [
