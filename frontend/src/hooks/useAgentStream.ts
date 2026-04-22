@@ -59,12 +59,20 @@ export interface StepItem {
   timestamp: number;
 }
 
+/** MCP App event data emitted via CUSTOM "McpApp" events */
+export interface McpAppEvent {
+  toolCallId: string;
+  appId: string;
+  htmlUrl: string;
+}
+
 interface UseAgentStreamReturn {
   messages: ChatMessage[];
   toolCalls: ToolCall[];
   events: TimestampedEvent[];
   activities: ActivityItem[];
   steps: StepItem[];
+  mcpApps: McpAppEvent[];
   isRunning: boolean;
   error: string | null;
   pendingApproval: PendingApproval | null;
@@ -86,6 +94,7 @@ export function useAgentStream(
   const [events, setEvents] = useState<TimestampedEvent[]>([]);
   const [activities, setActivities] = useState<ActivityItem[]>([]);
   const [steps, setSteps] = useState<StepItem[]>([]);
+  const [mcpApps, setMcpApps] = useState<McpAppEvent[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
@@ -338,6 +347,13 @@ export function useAgentStream(
                   pendingReasoningTokens += reasoningTokens;
                 }
               }
+              // MCP App events — interactive tool UIs
+              if (event.name === "McpApp" && event.value && typeof event.value === "object") {
+                const appData = event.value as McpAppEvent;
+                if (appData.toolCallId && appData.appId && appData.htmlUrl) {
+                  setMcpApps((prev) => [...prev, appData]);
+                }
+              }
               break;
             }
 
@@ -542,6 +558,7 @@ export function useAgentStream(
     setToolCalls([]);
     setActivities([]);
     setSteps([]);
+    setMcpApps([]);
     conversationRef.current = [];
     messagesSnapshotRef.current = null;
     threadIdRef.current = null;
@@ -566,6 +583,7 @@ export function useAgentStream(
     events,
     activities,
     steps,
+    mcpApps,
     isRunning,
     error,
     pendingApproval,

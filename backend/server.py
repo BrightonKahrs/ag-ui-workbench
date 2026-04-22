@@ -24,6 +24,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 from ag_ui.core import (
+    CustomEvent,
     StateDeltaEvent,
     StateSnapshotEvent,
     ToolCallResultEvent,
@@ -52,7 +53,59 @@ mcp_tool: MCPStreamableHTTPTool | None = None
 # Shared pending approvals registry across requests
 pending_approvals: OrderedDict[str, str] = OrderedDict()
 
+# --- MCP App Registry ---
+# Tools that produce interactive HTML UIs. After their TOOL_CALL_RESULT,
+# the /chat endpoint emits a CUSTOM "McpApp" event with the app HTML URL.
+MCP_APP_TOOL_NAMES = {"explore_dataset_app", "visualize_statistics_app"}
+MCP_SERVER_BASE_URL = os.environ.get("MCP_SERVER_URL", "http://127.0.0.1:8889").rstrip("/mcp").rstrip("/")
+
 # --- State Diff Middleware ---
+
+# --- MCP App Middleware ---
+
+
+async def mcp_app_stream(
+    events_gen: AsyncGenerator,
+) -> AsyncGenerator:
+    """Middleware that detects MCP App tool results and emits CUSTOM McpApp events.
+
+    Tracks active tool calls by name. When a TOOL_CALL_RESULT arrives for an
+    MCP App tool, emits a CUSTOM event with the tool call ID and the URL where
+    the frontend can fetch the interactive HTML.
+    """
+    import urllib.parse
+
+    # Map tool_call_id → tool_name for active calls
+    active_tool_names: dict[str, str] = {}
+
+    async for event in events_gen:
+        # Track tool call names
+        if isinstance(event, ToolCallStartEvent):
+            active_tool_names[event.tool_call_id] = event.tool_call_name
+            yield event
+            continue
+
+        # Check if this is a result from an MCP App tool
+        if isinstance(event, ToolCallResultEvent):
+            yield event
+            tool_name = active_tool_names.pop(event.tool_call_id, None)
+            if tool_name and tool_name in MCP_APP_TOOL_NAMES:
+                # Build URL for the app HTML endpoint
+                encoded_result = urllib.parse.quote(event.content, safe="")
+                html_url = f"{MCP_SERVER_BASE_URL}/app-html/{tool_name}?data={encoded_result}"
+                logger.info(f"[mcp-app] Emitting McpApp event for {tool_name} (call {event.tool_call_id})")
+                yield CustomEvent(
+                    name="McpApp",
+                    value={
+                        "toolCallId": event.tool_call_id,
+                        "appId": tool_name,
+                        "htmlUrl": html_url,
+                    },
+                )
+            continue
+
+        yield event
+
 
 
 def _sync_state_store(state: dict[str, Any], thread_id: str) -> None:
@@ -290,8 +343,10 @@ async def dynamic_chat_endpoint(request_body: AGUIRequest) -> StreamingResponse:
             input_data, base_agent, config,
             pending_approvals=pending_approvals if hitl else None,
         )
+        # Wrap with MCP App middleware to detect app tool results
+        events_with_apps = mcp_app_stream(raw_events)
         try:
-            async for event in raw_events:
+            async for event in events_with_apps:
                 event_count += 1
                 event_type_name = getattr(event, "type", type(event).__name__)
                 if "TOOL_CALL" in str(event_type_name) or "RUN" in str(event_type_name):

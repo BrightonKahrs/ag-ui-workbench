@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { FeatureToggles, TimestampedEvent } from "../types/ag-ui";
 import { useAgentStream, type ToolCall } from "../hooks/useAgentStream";
+import McpAppViewer from "./McpAppViewer";
 
 interface Props {
   toggles: FeatureToggles;
@@ -119,6 +120,7 @@ export default function ChatTab({ toggles, onEvents }: Props) {
     messages,
     toolCalls,
     events,
+    mcpApps,
     isRunning,
     error,
     pendingApproval,
@@ -216,9 +218,15 @@ export default function ChatTab({ toggles, onEvents }: Props) {
         ))}
 
         {/* Tool Calls — show all, not just active */}
-        {toolCalls.map((tc) => (
-          <ToolCallCard key={tc.id} tc={tc} toggles={toggles} />
-        ))}
+        {toolCalls.map((tc) => {
+          const appForTool = mcpApps.find((a) => a.toolCallId === tc.id);
+          return (
+            <div key={tc.id}>
+              <ToolCallCard tc={tc} toggles={toggles} />
+              {appForTool && <McpAppViewer app={appForTool} />}
+            </div>
+          );
+        })}
 
         {/* HITL Approval Dialog */}
         {pendingApproval && (

@@ -17,6 +17,11 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, ""),
       },
+      "/mcp-api": {
+        target: "http://127.0.0.1:8889",
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/mcp-api/, ""),
+      },
     },
   },
 });
