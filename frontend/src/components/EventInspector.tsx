@@ -147,6 +147,7 @@ function getEventSummary(event: TimestampedEvent["event"]): string {
 // Events before the first RUN_STARTED are placed in a "pre-run" group.
 
 interface RunChain {
+  kind: "run";
   id: string;
   runId: string | null;
   threadId: string | null;
@@ -158,19 +159,29 @@ interface RunChain {
   hasError: boolean;
 }
 
-function buildRunChains(events: TimestampedEvent[], viewMode: ViewMode): RunChain[] {
+interface RequestEntry {
+  kind: "request";
+  id: string;
+  entry: TimestampedEvent;
+}
+
+type InspectorItem = RunChain | RequestEntry;
+
+function buildRunChains(events: TimestampedEvent[], viewMode: ViewMode): InspectorItem[] {
   if (events.length === 0) return [];
 
-  const chains: RunChain[] = [];
+  const items: InspectorItem[] = [];
   let currentChain: TimestampedEvent[] = [];
   let currentRunId: string | null = null;
   let currentThreadId: string | null = null;
   let chainStarted = false;
+  let runCounter = 0;
 
   const flushChain = (complete: boolean, hasError: boolean) => {
     if (currentChain.length === 0) return;
-    chains.push({
-      id: `run-${chains.length}`,
+    items.push({
+      kind: "run",
+      id: `run-${runCounter++}`,
       runId: currentRunId,
       threadId: currentThreadId,
       events: currentChain,
@@ -187,20 +198,17 @@ function buildRunChains(events: TimestampedEvent[], viewMode: ViewMode): RunChai
   };
 
   for (const te of events) {
-    // REQUEST_SENT entries precede a run — start a new chain
+    // Request entries are standalone — flush any open chain, emit request, continue
     if (te.request) {
-      if (currentChain.length > 0 && chainStarted) {
-        flushChain(false, false);
-      } else if (currentChain.length > 0) {
-        flushChain(false, false);
+      if (currentChain.length > 0) {
+        flushChain(chainStarted ? false : false, false);
       }
-      currentChain.push(te);
+      items.push({ kind: "request", id: te.id, entry: te });
     } else if (te.event.type === AGUIEventType.RUN_STARTED) {
       // Flush any preceding events as an incomplete chain
       if (currentChain.length > 0 && chainStarted) {
         flushChain(false, false);
       } else if (currentChain.length > 0) {
-        // Pre-run events (shouldn't happen normally but handle gracefully)
         flushChain(false, false);
       }
       chainStarted = true;
@@ -223,7 +231,7 @@ function buildRunChains(events: TimestampedEvent[], viewMode: ViewMode): RunChai
     flushChain(false, false);
   }
 
-  return chains;
+  return items;
 }
 
 interface EventGroup {
@@ -561,49 +569,60 @@ export default function EventInspector({ events }: Props) {
             No events yet. Send a message to see AG-UI events stream in.
           </div>
         ) : runChains ? (
-          /* Per-run chain view */
-          runChains.map((chain, chainIdx) => {
-            const isRunExpanded = expandedRuns.has(chain.id);
-            const statusIcon = chain.hasError ? "❌" : chain.isComplete ? "✅" : "⏳";
-            const statusColor = chain.hasError
-              ? "border-red-800 bg-red-950/50"
-              : chain.isComplete
-              ? "border-blue-800 bg-blue-950/50"
-              : "border-yellow-800 bg-yellow-950/50";
-            const statusText = chain.hasError
-              ? "text-red-400"
-              : chain.isComplete
-              ? "text-blue-400"
-              : "text-yellow-400";
+          /* Per-run chain view with interleaved request entries */
+          (() => {
+            let runNumber = 0;
+            return runChains.map((item) => {
+              // Standalone request entry
+              if (item.kind === "request") {
+                return renderEvent(item.entry, false);
+              }
 
-            return (
-              <div key={chain.id} className="space-y-0.5">
-                {/* Run chain header */}
-                <div
-                  className={`rounded-lg px-2 py-1.5 cursor-pointer transition-colors border ${statusColor} hover:opacity-90`}
-                  onClick={() => toggleRun(chain.id)}
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] opacity-60 select-none">
-                      {isRunExpanded ? "▼" : "▶"}
-                    </span>
-                    <span className="text-xs">{statusIcon}</span>
-                    <span className={`text-xs font-bold ${statusText}`}>
-                      Run {chainIdx + 1}
-                    </span>
-                    <span className="text-[10px] font-mono bg-black/30 rounded px-1.5 py-0.5">
-                      {chain.events.length}
-                    </span>
-                    {chain.threadId && (
-                      <span className="text-[10px] opacity-40 font-mono truncate">
-                        {chain.threadId.slice(0, 12)}…
+              // Run chain
+              const chain = item;
+              runNumber++;
+              const thisRunNumber = runNumber;
+              const isRunExpanded = expandedRuns.has(chain.id);
+              const statusIcon = chain.hasError ? "❌" : chain.isComplete ? "✅" : "⏳";
+              const statusColor = chain.hasError
+                ? "border-red-800 bg-red-950/50"
+                : chain.isComplete
+                ? "border-blue-800 bg-blue-950/50"
+                : "border-yellow-800 bg-yellow-950/50";
+              const statusText = chain.hasError
+                ? "text-red-400"
+                : chain.isComplete
+                ? "text-blue-400"
+                : "text-yellow-400";
+
+              return (
+                <div key={chain.id} className="space-y-0.5">
+                  {/* Run chain header */}
+                  <div
+                    className={`rounded-lg px-2 py-1.5 cursor-pointer transition-colors border ${statusColor} hover:opacity-90`}
+                    onClick={() => toggleRun(chain.id)}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] opacity-60 select-none">
+                        {isRunExpanded ? "▼" : "▶"}
                       </span>
-                    )}
-                    <span className="text-[10px] opacity-50 font-mono ml-auto">
-                      {formatTimestamp(chain.firstTimestamp)}
-                    </span>
+                      <span className="text-xs">{statusIcon}</span>
+                      <span className={`text-xs font-bold ${statusText}`}>
+                        Run {thisRunNumber}
+                      </span>
+                      <span className="text-[10px] font-mono bg-black/30 rounded px-1.5 py-0.5">
+                        {chain.events.length}
+                      </span>
+                      {chain.threadId && (
+                        <span className="text-[10px] opacity-40 font-mono truncate">
+                          {chain.threadId.slice(0, 12)}…
+                        </span>
+                      )}
+                      <span className="text-[10px] opacity-50 font-mono ml-auto">
+                        {formatTimestamp(chain.firstTimestamp)}
+                      </span>
+                    </div>
                   </div>
-                </div>
 
                 {/* Expanded run — show sub-groups at same indent level */}
                 {isRunExpanded && (
@@ -680,7 +699,8 @@ export default function EventInspector({ events }: Props) {
                 )}
               </div>
             );
-          })
+          });
+          })()
         ) : (
           /* Flat view — when filtering */
           filteredEvents.map((te) => renderEvent(te))
