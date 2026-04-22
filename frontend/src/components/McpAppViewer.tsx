@@ -1,18 +1,30 @@
 /**
- * McpAppViewer - Renders MCP App tool HTML in a sandboxed iframe.
+ * McpAppViewer — Renders MCP App tool UIs using the official MCP Apps SDK.
  *
- * When an MCP App tool completes, the backend emits a CUSTOM "McpApp" event
- * with { toolCallId, appId, htmlUrl }. This component fetches the HTML from
- * the MCP server (proxied via /mcp-api) and renders it in a sandboxed iframe
- * using srcdoc for maximum security isolation.
+ * Architecture:
+ *   1. Backend detects an MCP App tool result and emits a CUSTOM "McpApp"
+ *      event with { toolCallId, appId, structuredContent, toolArguments }.
+ *   2. This component fetches the pre-compiled HTML from the MCP server
+ *      (via /mcp-api proxy → /app-html/{appId}).
+ *   3. Renders the HTML in a sandboxed iframe.
+ *   4. Uses AppBridge + PostMessageTransport from @modelcontextprotocol/ext-apps
+ *      to pass data to the app inside the iframe (proper MCP Apps protocol).
+ *   5. The app receives data via ontoolresult → structuredContent.
  */
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  AppBridge,
+  PostMessageTransport,
+} from "@modelcontextprotocol/ext-apps/app-bridge";
 
 export interface McpAppData {
   toolCallId: string;
   appId: string;
-  htmlUrl: string;
+  /** The structured data from the tool result (passed to the app via PostMessage) */
+  structuredContent: Record<string, unknown>;
+  /** Original tool arguments (passed as toolInput) */
+  toolArguments?: Record<string, unknown>;
 }
 
 interface Props {
@@ -31,19 +43,16 @@ export default function McpAppViewer({ app }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState(true);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const bridgeRef = useRef<AppBridge | null>(null);
 
+  // Fetch the compiled static HTML from MCP server (no data in URL)
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
 
-    // Proxy through Vite to avoid CORS
-    const proxyUrl = app.htmlUrl.replace(
-      /^https?:\/\/127\.0\.0\.1:8889/,
-      "/mcp-api"
-    );
-
-    fetch(proxyUrl)
+    fetch(`/mcp-api/app-html/${app.appId}`)
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
         return res.text();
@@ -61,8 +70,66 @@ export default function McpAppViewer({ app }: Props) {
         }
       });
 
-    return () => { cancelled = true; };
-  }, [app.htmlUrl]);
+    return () => {
+      cancelled = true;
+    };
+  }, [app.appId]);
+
+  // Set up AppBridge when iframe loads
+  const onIframeLoad = useCallback(() => {
+    const iframe = iframeRef.current;
+    if (!iframe?.contentWindow) return;
+
+    // Clean up previous bridge
+    if (bridgeRef.current) {
+      bridgeRef.current.close().catch(() => {});
+      bridgeRef.current = null;
+    }
+
+    const bridge = new AppBridge(
+      null, // No MCP client — we handle data manually
+      { name: "AG-UI Playground", version: "1.0.0" },
+      { openLinks: {} }, // Minimal capabilities
+    );
+
+    bridge.oninitialized = () => {
+      // Send tool input (arguments) first, then the result
+      bridge.sendToolInput({
+        arguments: app.toolArguments ?? {},
+      });
+      bridge.sendToolResult({
+        content: [{ type: "text", text: JSON.stringify(app.structuredContent) }],
+        structuredContent: app.structuredContent,
+      });
+    };
+
+    bridge.onsizechange = ({ height }) => {
+      if (height != null && iframe) {
+        iframe.style.height = `${height}px`;
+      }
+    };
+
+    const transport = new PostMessageTransport(
+      iframe.contentWindow,
+      iframe.contentWindow,
+    );
+
+    bridge.connect(transport).catch((err) => {
+      console.warn("[McpAppViewer] Bridge connect failed:", err);
+    });
+
+    bridgeRef.current = bridge;
+  }, [app.structuredContent, app.toolArguments]);
+
+  // Cleanup bridge on unmount
+  useEffect(() => {
+    return () => {
+      if (bridgeRef.current) {
+        bridgeRef.current.close().catch(() => {});
+        bridgeRef.current = null;
+      }
+    };
+  }, []);
 
   const displayName = APP_NAMES[app.appId] || `🧩 ${app.appId}`;
 
@@ -87,7 +154,8 @@ export default function McpAppViewer({ app }: Props) {
           <div className="border-t border-purple-800/50">
             {loading && (
               <div className="flex items-center justify-center py-8 text-purple-400 text-sm">
-                <span className="animate-spin mr-2">⏳</span> Loading interactive UI...
+                <span className="animate-spin mr-2">⏳</span> Loading interactive
+                UI...
               </div>
             )}
             {error && (
@@ -97,11 +165,13 @@ export default function McpAppViewer({ app }: Props) {
             )}
             {html && !error && (
               <iframe
+                ref={iframeRef}
                 srcDoc={html}
                 sandbox="allow-scripts"
                 title={displayName}
                 className="w-full border-0"
                 style={{ height: "420px", background: "#0f172a" }}
+                onLoad={onIframeLoad}
               />
             )}
           </div>

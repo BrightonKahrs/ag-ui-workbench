@@ -1,0 +1,23 @@
+{
+  "name": "ag-ui-playground-mcp-apps",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "vite build && cross-env ENTRY=statistics-dashboard vite build && cross-env ENTRY=interactive-chart vite build",
+    "build:dataset": "vite build",
+    "build:stats": "cross-env ENTRY=statistics-dashboard vite build",
+    "build:chart": "cross-env ENTRY=interactive-chart vite build",
+    "watch": "vite build --watch"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/ext-apps": "^1.2.2",
+    "chart.js": "^4.4.7"
+  },
+  "devDependencies": {
+    "cross-env": "^7.0.3",
+    "typescript": "^5.7.0",
+    "vite": "^6.0.0",
+    "vite-plugin-singlefile": "^2.3.2"
+  }
+}

@@ -27,6 +27,7 @@ from ag_ui.core import (
     CustomEvent,
     StateDeltaEvent,
     StateSnapshotEvent,
+    ToolCallArgsEvent,
     ToolCallResultEvent,
     ToolCallStartEvent,
 )
@@ -70,38 +71,72 @@ async def mcp_app_stream(
     """Middleware that detects MCP App tool results and emits CUSTOM McpApp events.
 
     Tracks active tool calls by name. When a TOOL_CALL_RESULT arrives for an
-    MCP App tool, emits a CUSTOM event with the tool call ID and the URL where
-    the frontend can fetch the interactive HTML.
+    MCP App tool, parses the result JSON and emits a CUSTOM event with the
+    structured content so the frontend can render it via AppBridge/PostMessage.
     """
-    import urllib.parse
+    import json as _json
 
-    # Map tool_call_id → tool_name for active calls
-    active_tool_names: dict[str, str] = {}
+    # Map tool_call_id → (tool_name, tool_args_json)
+    active_tool_calls: dict[str, tuple[str, str]] = {}
 
     async for event in events_gen:
         # Track tool call names
         if isinstance(event, ToolCallStartEvent):
-            active_tool_names[event.tool_call_id] = event.tool_call_name
+            active_tool_calls[event.tool_call_id] = (event.tool_call_name, "")
+            yield event
+            continue
+
+        # Accumulate tool arguments so we can pass them to the app
+        if isinstance(event, ToolCallArgsEvent):
+            if event.tool_call_id in active_tool_calls:
+                name, prev_args = active_tool_calls[event.tool_call_id]
+                active_tool_calls[event.tool_call_id] = (name, prev_args + event.delta)
             yield event
             continue
 
         # Check if this is a result from an MCP App tool
         if isinstance(event, ToolCallResultEvent):
             yield event
-            tool_name = active_tool_names.pop(event.tool_call_id, None)
-            if tool_name and tool_name in MCP_APP_TOOL_NAMES:
-                # Build URL for the app HTML endpoint
-                encoded_result = urllib.parse.quote(event.content, safe="")
-                html_url = f"{MCP_SERVER_BASE_URL}/app-html/{tool_name}?data={encoded_result}"
-                logger.info(f"[mcp-app] Emitting McpApp event for {tool_name} (call {event.tool_call_id})")
-                yield CustomEvent(
-                    name="McpApp",
-                    value={
-                        "toolCallId": event.tool_call_id,
-                        "appId": tool_name,
-                        "htmlUrl": html_url,
-                    },
-                )
+            entry = active_tool_calls.pop(event.tool_call_id, None)
+            if entry:
+                tool_name, tool_args_str = entry
+                if tool_name in MCP_APP_TOOL_NAMES:
+                    # Parse the tool result — event.content may be the full
+                    # CallToolResult envelope or just the text content.
+                    try:
+                        parsed = _json.loads(event.content)
+                    except (ValueError, TypeError):
+                        parsed = {"raw": event.content}
+
+                    # Extract the actual data: if it's a CallToolResult envelope
+                    # with a nested structuredContent, use that.
+                    if isinstance(parsed, dict) and "structuredContent" in parsed and parsed["structuredContent"]:
+                        structured_content = parsed["structuredContent"]
+                    elif isinstance(parsed, dict) and "content" in parsed and isinstance(parsed["content"], list):
+                        # Fallback: parse the text from content[0].text
+                        try:
+                            structured_content = _json.loads(parsed["content"][0]["text"])
+                        except (ValueError, TypeError, KeyError, IndexError):
+                            structured_content = parsed
+                    else:
+                        structured_content = parsed
+
+                    # Parse tool arguments
+                    try:
+                        tool_arguments = _json.loads(tool_args_str) if tool_args_str else {}
+                    except (ValueError, TypeError):
+                        tool_arguments = {}
+
+                    logger.info(f"[mcp-app] Emitting McpApp event for {tool_name} (call {event.tool_call_id})")
+                    yield CustomEvent(
+                        name="McpApp",
+                        value={
+                            "toolCallId": event.tool_call_id,
+                            "appId": tool_name,
+                            "structuredContent": structured_content,
+                            "toolArguments": tool_arguments,
+                        },
+                    )
             continue
 
         yield event

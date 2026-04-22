@@ -63,7 +63,8 @@ export interface StepItem {
 export interface McpAppEvent {
   toolCallId: string;
   appId: string;
-  htmlUrl: string;
+  structuredContent: Record<string, unknown>;
+  toolArguments?: Record<string, unknown>;
 }
 
 interface UseAgentStreamReturn {
@@ -350,7 +351,7 @@ export function useAgentStream(
               // MCP App events — interactive tool UIs
               if (event.name === "McpApp" && event.value && typeof event.value === "object") {
                 const appData = event.value as McpAppEvent;
-                if (appData.toolCallId && appData.appId && appData.htmlUrl) {
+                if (appData.toolCallId && appData.appId && appData.structuredContent) {
                   setMcpApps((prev) => [...prev, appData]);
                 }
               }

@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@modelcontextprotocol/ext-apps": "^1.7.0",
     "fast-json-patch": "^3.1.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
