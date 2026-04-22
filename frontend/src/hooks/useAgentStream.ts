@@ -153,8 +153,9 @@ export function useAgentStream(
 
           switch (event.type) {
             case AGUIEventType.RUN_STARTED: {
-              // Persist threadId for resume requests
-              if (event.threadId) {
+              // Only capture threadId if we don't already have one —
+              // the backend may replace our stable ID with its own.
+              if (event.threadId && !threadIdRef.current) {
                 threadIdRef.current = event.threadId;
               }
               break;
