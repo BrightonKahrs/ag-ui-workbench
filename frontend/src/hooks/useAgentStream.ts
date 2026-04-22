@@ -488,7 +488,12 @@ export function useAgentStream(
 
       const request: AGUIRunRequest = {
         messages: conversationRef.current,
-        threadId: threadIdRef.current || undefined,
+        threadId: threadIdRef.current || (() => {
+          // Generate a stable thread ID on first message in this session
+          const id = `thread-${crypto.randomUUID()}`;
+          threadIdRef.current = id;
+          return id;
+        })(),
         forwardedProps: buildForwardedProps(),
       };
 
@@ -537,7 +542,7 @@ export function useAgentStream(
 
       const request: AGUIRunRequest = {
         messages: msgs,
-        threadId: threadIdRef.current || undefined,
+        threadId: threadIdRef.current || `thread-${crypto.randomUUID()}`,
         forwardedProps: buildForwardedProps(),
         resume: {
           interrupts: [
