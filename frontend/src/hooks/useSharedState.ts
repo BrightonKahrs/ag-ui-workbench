@@ -102,8 +102,8 @@ export function useSharedState(
 
           switch (event.type) {
             case AGUIEventType.RUN_STARTED: {
-              // Capture threadId for subsequent requests
-              if (event.threadId) {
+              // Capture threadId from the first response as stable session ID
+              if (event.threadId && !threadIdRef.current) {
                 threadIdRef.current = event.threadId;
               }
               break;

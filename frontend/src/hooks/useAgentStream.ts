@@ -153,10 +153,10 @@ export function useAgentStream(
 
           switch (event.type) {
             case AGUIEventType.RUN_STARTED: {
-              // Always capture threadId from Foundry — it's the source of truth.
-              // With use_service_session=True, Foundry returns a stable conversation
-              // ID when we send the same threadId back on subsequent calls.
-              if (event.threadId) {
+              // Capture threadId from the first Foundry response only.
+              // Each Foundry call returns a new response ID, but we keep the
+              // first one as our stable session identifier for display.
+              if (event.threadId && !threadIdRef.current) {
                 threadIdRef.current = event.threadId;
               }
               break;

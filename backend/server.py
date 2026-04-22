@@ -368,7 +368,7 @@ async def dynamic_chat_endpoint(request_body: AGUIRequest) -> StreamingResponse:
         mcp_tools=mcp_tool,
         reasoning_effort=reasoning_effort,
     )
-    config = AgentConfig(require_confirmation=hitl, use_service_session=True)
+    config = AgentConfig(require_confirmation=hitl)
     encoder = EventEncoder()
 
     async def event_generator() -> AsyncGenerator[str]:
@@ -399,12 +399,12 @@ async def dynamic_chat_endpoint(request_body: AGUIRequest) -> StreamingResponse:
                         pass
                     return
             logger.info(f"[/chat] Completed streaming {event_count} events")
-        except Exception:
+        except Exception as stream_err:
             logger.exception("[/chat] Streaming failed")
             from ag_ui.core import RunErrorEvent
             try:
                 yield encoder.encode(RunErrorEvent(
-                    message="Internal error while streaming events.",
+                    message=f"Streaming error: {type(stream_err).__name__}: {stream_err}",
                     code="StreamError",
                 ))
             except Exception:
@@ -460,7 +460,6 @@ async def stateful_endpoint(request_body: AGUIRequest) -> StreamingResponse:
     base_agent = stateful_agent_wrapper.agent
     config = AgentConfig(
         predict_state_config=stateful_agent_wrapper.config.predict_state_config,
-        use_service_session=True,
     )
 
     encoder = EventEncoder()
@@ -499,12 +498,12 @@ async def stateful_endpoint(request_body: AGUIRequest) -> StreamingResponse:
                         pass
                     return
             logger.info(f"[/state] Completed streaming {event_count} events")
-        except Exception:
+        except Exception as stream_err:
             logger.exception("[/state] Streaming failed")
             from ag_ui.core import RunErrorEvent
             try:
                 yield encoder.encode(RunErrorEvent(
-                    message="Internal error while streaming events.",
+                    message=f"Streaming error: {type(stream_err).__name__}: {stream_err}",
                     code="StreamError",
                 ))
             except Exception:
@@ -550,7 +549,7 @@ async def plan_endpoint(request_body: AGUIRequest) -> StreamingResponse:
     # The middleware reads from state_store after each tool call and emits
     # STATE_SNAPSHOT/STATE_DELTA. This avoids the shape mismatch between
     # the LLM's array-based plan_json and our map-based state_store format.
-    config = AgentConfig(use_service_session=True)
+    config = AgentConfig()
 
     encoder = EventEncoder()
 
@@ -586,12 +585,12 @@ async def plan_endpoint(request_body: AGUIRequest) -> StreamingResponse:
                         pass
                     return
             logger.info(f"[/plan] Completed streaming {event_count} events")
-        except Exception:
+        except Exception as stream_err:
             logger.exception("[/plan] Streaming failed")
             from ag_ui.core import RunErrorEvent
             try:
                 yield encoder.encode(RunErrorEvent(
-                    message="Internal error while streaming events.",
+                    message=f"Streaming error: {type(stream_err).__name__}: {stream_err}",
                     code="StreamError",
                 ))
             except Exception:
@@ -643,12 +642,12 @@ async def workflow_endpoint(request_body: AGUIRequest) -> StreamingResponse:
                         pass
                     return
             logger.info(f"[/workflow] Completed streaming {event_count} events")
-        except Exception:
+        except Exception as stream_err:
             logger.exception("[/workflow] Streaming failed")
             from ag_ui.core import RunErrorEvent
             try:
                 yield encoder.encode(RunErrorEvent(
-                    message="Internal error while streaming events.",
+                    message=f"Streaming error: {type(stream_err).__name__}: {stream_err}",
                     code="StreamError",
                 ))
             except Exception:
