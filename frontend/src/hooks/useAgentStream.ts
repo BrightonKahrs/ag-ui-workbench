@@ -136,6 +136,18 @@ export function useAgentStream(
       const abortController = new AbortController();
       abortRef.current = abortController;
 
+      // Log outgoing request in Event Inspector
+      setEvents((prev) => {
+        const entry: TimestampedEvent = {
+          id: `req-${eventCounterRef.current++}`,
+          timestamp: Date.now(),
+          event: { type: "REQUEST_SENT" as AGUIEventType } as AGUIEvent,
+          request,
+        };
+        const next = [...prev, entry];
+        return next.length > MAX_EVENTS ? next.slice(-MAX_EVENTS) : next;
+      });
+
       let currentMessageId: string | null = null;
       let currentContent = "";
       let pendingReasoningTokens = 0;

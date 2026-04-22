@@ -215,6 +215,8 @@ export interface TimestampedEvent {
   id: string;
   timestamp: number;
   event: AGUIEvent;
+  /** When present, this entry represents the HTTP POST sent to the backend. */
+  request?: AGUIRunRequest;
 }
 
 // --- Request Types ---

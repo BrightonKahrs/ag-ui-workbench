@@ -91,6 +91,19 @@ export function useSharedState(
       const abortController = new AbortController();
       abortRef.current = abortController;
 
+      // Log the outgoing request in the Event Inspector so users can see
+      // the full POST body (including state sent back to the backend).
+      setEvents((prev) => {
+        const entry: TimestampedEvent = {
+          id: `req-${eventCounterRef.current++}`,
+          timestamp: Date.now(),
+          event: { type: "REQUEST_SENT" as AGUIEventType } as AGUIEvent,
+          request,
+        };
+        const next = [...prev, entry];
+        return next.length > MAX_EVENTS ? next.slice(-MAX_EVENTS) : next;
+      });
+
       let currentMessageId: string | null = null;
       let currentContent = "";
 

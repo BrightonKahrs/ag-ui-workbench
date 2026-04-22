@@ -9,6 +9,7 @@ interface Props {
 // --- Helpers ---
 
 function getCategoryPrefix(type: string): string {
+  if (type === "REQUEST_SENT") return "REQUEST";
   if (type.startsWith("TEXT_MESSAGE")) return "TEXT_MESSAGE";
   if (type.startsWith("TOOL_CALL")) return "TOOL_CALL";
   if (type.startsWith("STATE_")) return "STATE";
@@ -21,6 +22,7 @@ function getCategoryPrefix(type: string): string {
 
 function getCategoryColor(cat: string): string {
   switch (cat) {
+    case "REQUEST": return "text-amber-400 bg-amber-950 border-amber-900";
     case "RUN": return "text-blue-400 bg-blue-950 border-blue-900";
     case "TEXT_MESSAGE": return "text-green-400 bg-green-950 border-green-900";
     case "TOOL_CALL": return "text-yellow-400 bg-yellow-950 border-yellow-900";
@@ -38,6 +40,7 @@ function getEventColor(type: string): string {
 
 function getCategoryIcon(cat: string): string {
   switch (cat) {
+    case "REQUEST": return "📤";
     case "RUN": return "▶️";
     case "TEXT_MESSAGE": return "💬";
     case "TOOL_CALL": return "🔧";
@@ -184,7 +187,15 @@ function buildRunChains(events: TimestampedEvent[], viewMode: ViewMode): RunChai
   };
 
   for (const te of events) {
-    if (te.event.type === AGUIEventType.RUN_STARTED) {
+    // REQUEST_SENT entries precede a run — start a new chain
+    if (te.request) {
+      if (currentChain.length > 0 && chainStarted) {
+        flushChain(false, false);
+      } else if (currentChain.length > 0) {
+        flushChain(false, false);
+      }
+      currentChain.push(te);
+    } else if (te.event.type === AGUIEventType.RUN_STARTED) {
       // Flush any preceding events as an incomplete chain
       if (currentChain.length > 0 && chainStarted) {
         flushChain(false, false);
@@ -403,7 +414,8 @@ export default function EventInspector({ events }: Props) {
   const filteredEvents = filter
     ? events.filter((e) =>
         e.event.type.toLowerCase().includes(filter.toLowerCase()) ||
-        getEventSummary(e.event).toLowerCase().includes(filter.toLowerCase())
+        getEventSummary(e.event).toLowerCase().includes(filter.toLowerCase()) ||
+        (e.request && "request".includes(filter.toLowerCase()))
       )
     : events;
 
@@ -449,33 +461,54 @@ export default function EventInspector({ events }: Props) {
   };
 
   // Render a single event row
-  const renderEvent = (te: TimestampedEvent, indent: boolean = false) => (
-    <div
-      key={te.id}
-      className={`rounded px-2 py-1 cursor-pointer transition-colors hover:opacity-90 ${getEventColor(
-        te.event.type
-      )} ${indent ? "ml-3 border-l-2 border-current/20" : ""}`}
-      onClick={(e) => { e.stopPropagation(); toggleEvent(te.id); }}
-    >
-      <div className="flex items-center gap-2">
-        <span className="text-xs">{getEventIcon(te.event.type)}</span>
-        <span className="text-[11px] font-mono font-bold flex-1 truncate">
-          {te.event.type}
-        </span>
-        <span className="text-[10px] opacity-60 font-mono">
-          {formatTimestamp(te.timestamp)}
-        </span>
+  const renderEvent = (te: TimestampedEvent, indent: boolean = false) => {
+    const isRequest = !!te.request;
+    const colorClass = isRequest
+      ? "text-amber-400 bg-amber-950 border-amber-900"
+      : getEventColor(te.event.type);
+    const icon = isRequest ? "📤" : getEventIcon(te.event.type);
+    const label = isRequest ? "POST Request → Backend" : te.event.type;
+    const summary = isRequest
+      ? (() => {
+          const stateKeys = te.request?.state
+            ? Object.keys(te.request.state).filter((k) => te.request!.state![k] != null)
+            : [];
+          const parts: string[] = [];
+          if (te.request?.threadId) parts.push(`thread: ${te.request.threadId.slice(0, 12)}…`);
+          if (stateKeys.length) parts.push(`state: {${stateKeys.join(", ")}}`);
+          parts.push(`${te.request?.messages?.length ?? 0} messages`);
+          return parts.join(" · ");
+        })()
+      : getEventSummary(te.event);
+    // For requests, show the full request body when expanded
+    const expandedContent = isRequest ? te.request : te.event;
+
+    return (
+      <div
+        key={te.id}
+        className={`rounded px-2 py-1 cursor-pointer transition-colors hover:opacity-90 ${colorClass} ${indent ? "ml-3 border-l-2 border-current/20" : ""}`}
+        onClick={(e) => { e.stopPropagation(); toggleEvent(te.id); }}
+      >
+        <div className="flex items-center gap-2">
+          <span className="text-xs">{icon}</span>
+          <span className="text-[11px] font-mono font-bold flex-1 truncate">
+            {label}
+          </span>
+          <span className="text-[10px] opacity-60 font-mono">
+            {formatTimestamp(te.timestamp)}
+          </span>
+        </div>
+        <div className="text-[10px] opacity-70 mt-0.5 truncate pl-5">
+          {summary}
+        </div>
+        {expandedEvents.has(te.id) && (
+          <pre className="mt-1 text-[10px] bg-black/30 rounded p-2 overflow-x-auto max-h-40 overflow-y-auto">
+            {JSON.stringify(expandedContent, null, 2)}
+          </pre>
+        )}
       </div>
-      <div className="text-[10px] opacity-70 mt-0.5 truncate pl-5">
-        {getEventSummary(te.event)}
-      </div>
-      {expandedEvents.has(te.id) && (
-        <pre className="mt-1 text-[10px] bg-black/30 rounded p-2 overflow-x-auto max-h-40 overflow-y-auto">
-          {JSON.stringify(te.event, null, 2)}
-        </pre>
-      )}
-    </div>
-  );
+    );
+  };
 
   return (
     <div className="flex flex-col h-full">
