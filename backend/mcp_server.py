@@ -241,7 +241,8 @@ def get_server_info() -> str:
         "transport": "Streamable HTTP",
         "port": 8889,
         "tools": ["search_knowledge_base", "list_datasets", "query_dataset",
-                   "compute_statistics", "get_server_info"],
+                   "compute_statistics", "get_server_info",
+                   "explore_dataset_app", "visualize_statistics_app", "create_chart_app"],
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }, indent=2)
 
@@ -251,7 +252,7 @@ def get_server_info() -> str:
 # The HTML is served via GET /app-html/{name}?data=<json> for frontend iframes.
 
 # Registry of which tools are MCP App tools (used by backend to detect them)
-MCP_APP_TOOLS = {"explore_dataset_app", "visualize_statistics_app"}
+MCP_APP_TOOLS = {"explore_dataset_app", "visualize_statistics_app", "create_chart_app"}
 
 
 @mcp.tool()
@@ -327,6 +328,47 @@ def visualize_statistics_app(numbers: list[float], label: str = "Dataset") -> st
         "numbers": numbers,
         "_mcp_app": "visualize_statistics_app",
     })
+
+
+@mcp.tool()
+def create_chart_app(chart_json: str) -> str:
+    """Create an interactive chart visualization as an MCP App.
+
+    This is the preferred tool for any data visualization request (line charts,
+    bar charts, area charts, scatter plots, pie charts). It renders an interactive
+    chart in the frontend.
+
+    Args:
+        chart_json: JSON string with chart configuration:
+            {
+                "title": "Chart Title",
+                "type": "line" | "bar" | "area" | "scatter" | "pie",
+                "xKey": "name of x-axis field",
+                "series": [
+                    {"dataKey": "field_name", "label": "Display Name", "color": "#hex"}
+                ],
+                "data": [
+                    {"x_field": "Jan", "field_name": 100, ...},
+                    ...
+                ]
+            }
+    """
+    try:
+        chart = json.loads(chart_json)
+    except json.JSONDecodeError:
+        return json.dumps({"error": "Invalid JSON in chart_json"})
+
+    required = ["title", "type", "data", "series"]
+    for key in required:
+        if key not in chart:
+            return json.dumps({"error": f"Missing required field: {key}"})
+
+    valid_types = ["line", "bar", "area", "scatter", "pie"]
+    if chart["type"] not in valid_types:
+        return json.dumps({"error": f"Invalid chart type '{chart['type']}'. Use: {valid_types}"})
+
+    chart["_mcp_app"] = "create_chart_app"
+    return json.dumps(chart)
 
 
 # ---------- HTML Generators for MCP App Tools ----------
@@ -526,10 +568,164 @@ dotsEl.innerHTML = D.numbers.map(n => {{
 </html>"""
 
 
+def _generate_chart_html(data: dict) -> str:
+    """Generate self-contained HTML for interactive charts (line, bar, area, scatter, pie)."""
+    data_json = _safe_js_json(data)
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+         background: #0f172a; color: #e2e8f0; padding: 16px; }}
+  h2 {{ font-size: 16px; color: #a78bfa; margin-bottom: 4px; }}
+  .subtitle {{ font-size: 11px; color: #64748b; margin-bottom: 12px; }}
+  .chart-wrap {{ background: #1e293b; border: 1px solid #334155; border-radius: 8px;
+                padding: 16px; position: relative; }}
+  canvas {{ width: 100% !important; height: 280px !important; }}
+  .legend {{ display: flex; flex-wrap: wrap; gap: 12px; margin-top: 10px; justify-content: center; }}
+  .legend-item {{ display: flex; align-items: center; gap: 4px; font-size: 11px; color: #94a3b8; }}
+  .legend-dot {{ width: 10px; height: 10px; border-radius: 2px; }}
+  .controls {{ display: flex; gap: 8px; margin-bottom: 10px; }}
+  .controls button {{ background: #334155; border: 1px solid #475569; color: #e2e8f0;
+                      padding: 4px 12px; border-radius: 6px; font-size: 11px; cursor: pointer; }}
+  .controls button:hover {{ background: #475569; }}
+  .controls button.active {{ background: #7c3aed; border-color: #7c3aed; }}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+</head>
+<body>
+<h2 id="title"></h2>
+<div class="subtitle" id="subtitle"></div>
+<div class="controls" id="controls"></div>
+<div class="chart-wrap"><canvas id="chart"></canvas></div>
+<div class="legend" id="legend"></div>
+<script>
+const C = {data_json};
+const TYPES = ['line','bar','area','scatter','pie'];
+const COLORS = ['#7c3aed','#06b6d4','#f59e0b','#ef4444','#10b981','#f472b6','#8b5cf6','#14b8a6'];
+let currentType = C.type || 'line';
+
+document.getElementById('title').textContent = C.title || 'Chart';
+document.getElementById('subtitle').textContent =
+  C.data.length + ' data points \\u00b7 ' + (C.series||[]).length + ' series \\u00b7 ' + currentType + ' chart';
+
+// Type switcher buttons
+const ctrlEl = document.getElementById('controls');
+TYPES.forEach(t => {{
+  const btn = document.createElement('button');
+  btn.textContent = t.charAt(0).toUpperCase() + t.slice(1);
+  btn.dataset.type = t;
+  if (t === currentType) btn.classList.add('active');
+  btn.onclick = () => {{
+    currentType = t;
+    ctrlEl.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    renderChart();
+    document.getElementById('subtitle').textContent =
+      C.data.length + ' data points \\u00b7 ' + (C.series||[]).length + ' series \\u00b7 ' + currentType + ' chart';
+  }};
+  ctrlEl.appendChild(btn);
+}});
+
+const ctx = document.getElementById('chart').getContext('2d');
+let chartInstance = null;
+
+function renderChart() {{
+  if (chartInstance) chartInstance.destroy();
+
+  const xKey = C.xKey || (C.data.length > 0 ? Object.keys(C.data[0])[0] : 'x');
+  const labels = C.data.map(d => d[xKey]);
+  const series = C.series || [];
+
+  // Assign colors if not provided
+  series.forEach((s, i) => {{ if (!s.color) s.color = COLORS[i % COLORS.length]; }});
+
+  const isPie = currentType === 'pie';
+  const isArea = currentType === 'area';
+  const chartType = isArea ? 'line' : (isPie ? 'pie' : currentType);
+
+  let datasets;
+  if (isPie) {{
+    // Pie: use first series values, colored per slice
+    const s = series[0] || {{ dataKey: Object.keys(C.data[0])[1] }};
+    datasets = [{{
+      data: C.data.map(d => d[s.dataKey]),
+      backgroundColor: C.data.map((_, i) => COLORS[i % COLORS.length]),
+      borderColor: '#0f172a',
+      borderWidth: 2,
+    }}];
+  }} else {{
+    datasets = series.map((s, i) => ({{
+      label: s.label || s.dataKey,
+      data: C.data.map(d => d[s.dataKey]),
+      borderColor: s.color,
+      backgroundColor: isArea ? s.color + '33' : (currentType === 'bar' ? s.color + 'cc' : s.color),
+      fill: isArea,
+      tension: (currentType === 'line' || isArea) ? 0.3 : 0,
+      pointRadius: currentType === 'scatter' ? 5 : 3,
+      pointHoverRadius: 6,
+      borderWidth: 2,
+    }}));
+  }}
+
+  chartInstance = new Chart(ctx, {{
+    type: chartType,
+    data: {{ labels, datasets }},
+    options: {{
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: {{ duration: 400 }},
+      plugins: {{
+        legend: {{ display: false }},
+        tooltip: {{
+          backgroundColor: '#1e293b',
+          titleColor: '#e2e8f0',
+          bodyColor: '#94a3b8',
+          borderColor: '#334155',
+          borderWidth: 1,
+          cornerRadius: 6,
+        }},
+      }},
+      scales: isPie ? {{}} : {{
+        x: {{
+          ticks: {{ color: '#64748b', font: {{ size: 10 }} }},
+          grid: {{ color: '#1e293b' }},
+        }},
+        y: {{
+          ticks: {{ color: '#64748b', font: {{ size: 10 }} }},
+          grid: {{ color: '#1e293b' }},
+          beginAtZero: currentType === 'bar',
+        }},
+      }},
+    }},
+  }});
+
+  // Custom legend
+  const legendEl = document.getElementById('legend');
+  if (isPie) {{
+    legendEl.innerHTML = labels.map((l, i) =>
+      '<span class="legend-item"><span class="legend-dot" style="background:' + COLORS[i % COLORS.length] + '"></span>' + l + '</span>'
+    ).join('');
+  }} else {{
+    legendEl.innerHTML = series.map(s =>
+      '<span class="legend-item"><span class="legend-dot" style="background:' + s.color + '"></span>' + (s.label || s.dataKey) + '</span>'
+    ).join('');
+  }}
+}}
+
+renderChart();
+</script>
+</body>
+</html>"""
+
+
 # Map app tool names → HTML generator functions
 _APP_HTML_GENERATORS = {
     "explore_dataset_app": _generate_dataset_explorer_html,
     "visualize_statistics_app": _generate_statistics_dashboard_html,
+    "create_chart_app": _generate_chart_html,
 }
 
 

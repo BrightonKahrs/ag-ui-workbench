@@ -56,7 +56,7 @@ pending_approvals: OrderedDict[str, str] = OrderedDict()
 # --- MCP App Registry ---
 # Tools that produce interactive HTML UIs. After their TOOL_CALL_RESULT,
 # the /chat endpoint emits a CUSTOM "McpApp" event with the app HTML URL.
-MCP_APP_TOOL_NAMES = {"explore_dataset_app", "visualize_statistics_app"}
+MCP_APP_TOOL_NAMES = {"explore_dataset_app", "visualize_statistics_app", "create_chart_app"}
 MCP_SERVER_BASE_URL = os.environ.get("MCP_SERVER_URL", "http://127.0.0.1:8889").rstrip("/mcp").rstrip("/")
 
 # --- State Diff Middleware ---

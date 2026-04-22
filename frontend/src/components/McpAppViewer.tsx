@@ -23,6 +23,7 @@ interface Props {
 const APP_NAMES: Record<string, string> = {
   explore_dataset_app: "📊 Interactive Dataset Explorer",
   visualize_statistics_app: "📈 Statistics Dashboard",
+  create_chart_app: "📉 Interactive Chart",
 };
 
 export default function McpAppViewer({ app }: Props) {
@@ -100,7 +101,7 @@ export default function McpAppViewer({ app }: Props) {
                 sandbox="allow-scripts"
                 title={displayName}
                 className="w-full border-0"
-                style={{ height: "360px", background: "#0f172a" }}
+                style={{ height: "420px", background: "#0f172a" }}
               />
             )}
           </div>
