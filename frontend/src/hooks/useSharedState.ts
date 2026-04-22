@@ -24,6 +24,7 @@ export interface SharedStateReturn {
   isRunning: boolean;
   error: string | null;
   sendMessage: (content: string) => void;
+  updateState: (updater: (prev: Record<string, unknown>) => Record<string, unknown>) => void;
   clearState: () => void;
   clearEvents: () => void;
   cancelRun: () => void;
@@ -196,6 +197,18 @@ export function useSharedState(
     threadIdRef.current = null;
   }, []);
 
+  /** Update local state — changes are sent to the backend on the next message. */
+  const updateState = useCallback(
+    (updater: (prev: Record<string, unknown>) => Record<string, unknown>) => {
+      setState((prev) => {
+        const next = updater(prev);
+        stateRef.current = next;
+        return next;
+      });
+    },
+    [],
+  );
+
   const clearEvents = useCallback(() => {
     setEvents([]);
   }, []);
@@ -211,6 +224,7 @@ export function useSharedState(
     isRunning,
     error,
     sendMessage,
+    updateState,
     clearState,
     clearEvents,
     cancelRun,

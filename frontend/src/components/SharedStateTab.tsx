@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FeatureToggles, TimestampedEvent } from "../types/ag-ui";
 import { useSharedState } from "../hooks/useSharedState";
 import {
@@ -207,14 +207,18 @@ export default function SharedStateTab({ onEvents, toggles }: Props) {
     isRunning,
     error,
     sendMessage,
+    updateState,
     clearState,
     messages,
   } = useSharedState("/state", toggles);
 
   const [input, setInput] = useState("");
+  const [editorOpen, setEditorOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   // Buffer: keep last valid chart to avoid blanking during streaming updates (use ref to prevent re-render loops)
   const lastValidChartRef = useRef<ChartState | undefined>(undefined);
+  // Track the last chart state that was sent to (or received from) the backend
+  const lastSyncedChartRef = useRef<string>("");
   // Force re-render counter when lastValidChart changes (needed since ref doesn't trigger render)
   const [, setChartTick] = useState(0);
 
@@ -238,8 +242,23 @@ export default function SharedStateTab({ onEvents, toggles }: Props) {
   const handleClear = () => {
     clearState();
     lastValidChartRef.current = undefined;
+    lastSyncedChartRef.current = "";
     setChartTick((t) => t + 1);
   };
+
+  /** Update a chart property locally — syncs to backend on the next message. */
+  const updateChart = useCallback(
+    (patch: Partial<ChartState>) => {
+      updateState((prev) => {
+        const current =
+          typeof prev.chart === "string"
+            ? (() => { try { return JSON.parse(prev.chart as string); } catch { return {}; } })()
+            : prev.chart ?? {};
+        return { ...prev, chart: { ...current, ...patch } };
+      });
+    },
+    [updateState],
+  );
 
   // state.chart may be a JSON string (from predict_state streaming chart_json)
   // or an object (from STATE_SNAPSHOT after full parsing). Handle both.
@@ -262,6 +281,10 @@ export default function SharedStateTab({ onEvents, toggles }: Props) {
   // Update lastValidChart ref synchronously (no useEffect needed — avoids infinite loops)
   if (currentChart && currentChart.data && currentChart.series) {
     lastValidChartRef.current = currentChart;
+    // Track what backend sent so we can show "unsent changes" badge
+    if (isRunning) {
+      lastSyncedChartRef.current = JSON.stringify(currentChart);
+    }
   }
   // Clear buffer when run finishes with no chart
   if (!isRunning && state.chart === undefined && lastValidChartRef.current) {
@@ -272,14 +295,23 @@ export default function SharedStateTab({ onEvents, toggles }: Props) {
   const displayChart = currentChart ?? lastValidChartRef.current;
   const isStreamingChart = isRunning && !currentChart && !!lastValidChartRef.current;
 
+  // Detect local edits not yet sent to backend
+  const hasUnsentChanges = useMemo(() => {
+    if (!displayChart || !lastSyncedChartRef.current) return false;
+    return JSON.stringify(displayChart) !== lastSyncedChartRef.current;
+  }, [displayChart]);
+
+  const CHART_TYPES = ["bar", "line", "area", "pie", "scatter", "composed"] as const;
+
   return (
     <div className="flex-1 flex flex-col">
       {/* Tab Description */}
       <div className="bg-gray-850 border-b border-gray-800 px-4 py-2">
         <p className="text-xs text-gray-500">
-          <strong className="text-gray-400">Shared State Tab</strong> — Demonstrates
-          bidirectional state sync using STATE_SNAPSHOT and STATE_DELTA events.
-          The chart renders live from shared state as the agent streams tool arguments.
+          <strong className="text-gray-400">Shared State Tab</strong> — Bidirectional state sync:
+          backend streams STATE_SNAPSHOT/STATE_DELTA → frontend renders live.
+          Edit chart properties below → changes update local state instantly →
+          sent to backend in the <code className="text-purple-400">state</code> field on your next message.
         </p>
       </div>
 
@@ -363,30 +395,169 @@ export default function SharedStateTab({ onEvents, toggles }: Props) {
           </div>
         </div>
 
-        {/* Right: Chart Visualization */}
+        {/* Right: Chart Visualization + Editor */}
         <div className="flex-1 flex flex-col overflow-hidden">
-          {/* Chart Header */}
-          {displayChart?.title && (
-            <div className="px-4 pt-3 pb-1">
-              <h2 className="text-sm font-semibold text-white">
-                {displayChart.title}
-                {isStreamingChart && (
-                  <span className="ml-2 text-[10px] text-purple-400 animate-pulse">● Updating...</span>
-                )}
-              </h2>
-              <div className="flex items-center gap-2 mt-1">
-                <span className="text-[10px] bg-purple-950 text-purple-300 px-2 py-0.5 rounded uppercase">
-                  {displayChart.chart_type || "bar"}
+          {/* Chart Header with Edit Toggle */}
+          <div className="px-4 pt-3 pb-1 flex items-start justify-between">
+            <div className="flex-1">
+              {displayChart?.title ? (
+                <>
+                  <h2 className="text-sm font-semibold text-white">
+                    {displayChart.title}
+                    {isStreamingChart && (
+                      <span className="ml-2 text-[10px] text-purple-400 animate-pulse">● Updating...</span>
+                    )}
+                  </h2>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className="text-[10px] bg-purple-950 text-purple-300 px-2 py-0.5 rounded uppercase">
+                      {displayChart.chart_type || "bar"}
+                    </span>
+                    {displayChart.stacked && (
+                      <span className="text-[10px] bg-cyan-950 text-cyan-300 px-2 py-0.5 rounded">
+                        stacked
+                      </span>
+                    )}
+                    {displayChart.data && (
+                      <span className="text-[10px] text-gray-600">
+                        {displayChart.data.length} points · {displayChart.series?.length || 0} series
+                      </span>
+                    )}
+                    {hasUnsentChanges && (
+                      <span className="text-[10px] bg-amber-950 text-amber-300 px-2 py-0.5 rounded flex items-center gap-1">
+                        ⚡ Edited locally
+                        <span className="text-amber-500">(syncs on next message)</span>
+                      </span>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <h2 className="text-sm text-gray-500">No chart yet</h2>
+              )}
+            </div>
+            {displayChart && (
+              <button
+                onClick={() => setEditorOpen(!editorOpen)}
+                className={`ml-2 px-2 py-1 rounded text-[10px] font-medium transition-colors ${
+                  editorOpen
+                    ? "bg-purple-600 text-white"
+                    : "bg-gray-800 text-gray-400 hover:text-white hover:bg-gray-700"
+                }`}
+                title="Edit chart properties"
+              >
+                ✏️ Edit
+              </button>
+            )}
+          </div>
+
+          {/* Chart Editor Panel (collapsible) */}
+          {editorOpen && displayChart && (
+            <div className="mx-3 mb-2 border border-gray-700 rounded-lg bg-gray-900/80 overflow-hidden">
+              <div className="px-3 py-2 border-b border-gray-700 flex items-center justify-between">
+                <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">
+                  Chart Editor — Frontend State
                 </span>
-                {displayChart.stacked && (
-                  <span className="text-[10px] bg-cyan-950 text-cyan-300 px-2 py-0.5 rounded">
-                    stacked
-                  </span>
-                )}
-                {displayChart.data && (
-                  <span className="text-[10px] text-gray-600">
-                    {displayChart.data.length} points · {displayChart.series?.length || 0} series
-                  </span>
+                <span className="text-[10px] text-gray-600">
+                  Changes update state locally · Sent to backend on next message
+                </span>
+              </div>
+              <div className="p-3 grid grid-cols-2 gap-3">
+                {/* Title */}
+                <div className="col-span-2">
+                  <label className="block text-[10px] text-gray-500 mb-1">Title</label>
+                  <input
+                    type="text"
+                    value={displayChart.title || ""}
+                    onChange={(e) => updateChart({ title: e.target.value })}
+                    className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-purple-500"
+                  />
+                </div>
+
+                {/* Chart Type */}
+                <div>
+                  <label className="block text-[10px] text-gray-500 mb-1">Chart Type</label>
+                  <div className="flex flex-wrap gap-1">
+                    {CHART_TYPES.map((ct) => (
+                      <button
+                        key={ct}
+                        onClick={() => updateChart({ chart_type: ct })}
+                        className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${
+                          (displayChart.chart_type || "bar") === ct
+                            ? "bg-purple-600 text-white"
+                            : "bg-gray-800 text-gray-400 hover:text-white"
+                        }`}
+                      >
+                        {ct}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Axis Labels */}
+                <div className="flex gap-2">
+                  <div className="flex-1">
+                    <label className="block text-[10px] text-gray-500 mb-1">X Label</label>
+                    <input
+                      type="text"
+                      value={displayChart.x_label || ""}
+                      onChange={(e) => updateChart({ x_label: e.target.value })}
+                      className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-purple-500"
+                    />
+                  </div>
+                  <div className="flex-1">
+                    <label className="block text-[10px] text-gray-500 mb-1">Y Label</label>
+                    <input
+                      type="text"
+                      value={displayChart.y_label || ""}
+                      onChange={(e) => updateChart({ y_label: e.target.value })}
+                      className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-purple-500"
+                    />
+                  </div>
+                </div>
+
+                {/* Toggles */}
+                <div>
+                  <label className="block text-[10px] text-gray-500 mb-1">Display Options</label>
+                  <div className="flex flex-wrap gap-2">
+                    {([
+                      ["show_legend", "Legend"],
+                      ["show_grid", "Grid"],
+                      ["stacked", "Stacked"],
+                    ] as const).map(([key, label]) => (
+                      <label key={key} className="flex items-center gap-1 text-[10px] text-gray-400 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={displayChart[key] ?? (key !== "stacked")}
+                          onChange={(e) => updateChart({ [key]: e.target.checked })}
+                          className="rounded bg-gray-800 border-gray-600 text-purple-500 focus:ring-purple-500 focus:ring-offset-0 w-3 h-3"
+                        />
+                        {label}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Series Colors */}
+                {displayChart.series && displayChart.series.length > 0 && (
+                  <div>
+                    <label className="block text-[10px] text-gray-500 mb-1">Series Colors</label>
+                    <div className="flex flex-wrap gap-2">
+                      {displayChart.series.map((s, i) => (
+                        <label key={s.key} className="flex items-center gap-1 text-[10px] text-gray-400">
+                          <input
+                            type="color"
+                            value={s.color || "#8884d8"}
+                            onChange={(e) => {
+                              const newSeries = [...displayChart.series!];
+                              newSeries[i] = { ...newSeries[i], color: e.target.value };
+                              updateChart({ series: newSeries });
+                            }}
+                            className="w-4 h-4 rounded border-0 cursor-pointer bg-transparent"
+                          />
+                          {s.name}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
                 )}
               </div>
             </div>
@@ -422,7 +593,7 @@ export default function SharedStateTab({ onEvents, toggles }: Props) {
           {/* Raw State (collapsible) */}
           <details className="border-t border-gray-800">
             <summary className="px-3 py-2 text-[10px] text-gray-500 cursor-pointer hover:text-gray-400 select-none">
-              Raw State JSON
+              Raw State JSON {hasUnsentChanges && <span className="text-amber-400 ml-1">● modified</span>}
             </summary>
             <pre className="text-[10px] text-gray-600 bg-gray-950 p-3 overflow-auto max-h-32 mx-3 mb-3 rounded">
               {JSON.stringify(state, null, 2)}
