@@ -38,8 +38,8 @@ from agent_framework_ag_ui._agent_run import run_agent_stream
 from agent_framework_ag_ui._workflow_run import run_workflow_stream
 from agent_framework_ag_ui._types import AGUIRequest
 from agents.chat_agent import create_chat_agent
+from agents.dashboard_agent import create_dashboard_agent
 from agents.plan_agent import create_plan_agent
-from agents.stateful_agent import create_stateful_agent
 from agents.workflow_agent import create_workflow
 
 import state_store
@@ -144,9 +144,15 @@ async def mcp_app_stream(
 
 def _sync_state_store(state: dict[str, Any], thread_id: str) -> None:
     """Sync known namespaces from a state snapshot to state_store."""
-    for ns in ("chart", "plan"):
+    for ns in ("dashboard", "plan"):
         if ns in state and state[ns] is not None:
-            state_store.store_state(ns, state[ns], thread_id)
+            if ns == "dashboard":
+                state_store.store_dashboard(state[ns], thread_id)
+            else:
+                state_store.store_state(ns, state[ns], thread_id)
+    # Legacy: if state has "chart" but no "dashboard", migrate
+    if "chart" in state and "dashboard" not in state and state["chart"]:
+        state_store.store_state("chart", state["chart"], thread_id)
 
 
 def _normalize_state(state: dict[str, Any]) -> dict[str, Any]:
@@ -205,15 +211,18 @@ async def state_diff_stream(
     suppress_predictive = use_smart_delta and bool(shadow)
 
     # Track tool calls that modify state_store directly (no predict_state_config)
-    _STORE_MUTATING_TOOLS = {"patch_chart", "create_plan", "update_task"}
-    active_store_call_id: str | None = None
+    _STORE_MUTATING_TOOLS = {
+        "add_widget", "update_widget", "patch_widget", "remove_widget",
+        "patch_dashboard", "create_plan", "update_task",
+    }
+    active_store_call_ids: set[str] = set()
     suppress_next_snapshot = False
 
     async for event in events_gen:
         # --- Track tool call names ---
         if isinstance(event, ToolCallStartEvent):
             if event.tool_call_name in _STORE_MUTATING_TOOLS:
-                active_store_call_id = event.tool_call_id
+                active_store_call_ids.add(event.tool_call_id)
                 logger.info(f"[state-diff] {event.tool_call_name} started: {event.tool_call_id}")
             yield event
             continue
@@ -221,7 +230,8 @@ async def state_diff_stream(
         # --- After tool result: emit state from store for store-mutating tools ---
         if isinstance(event, ToolCallResultEvent):
             yield event
-            if active_store_call_id and event.tool_call_id == active_store_call_id:
+            if event.tool_call_id in active_store_call_ids:
+                active_store_call_ids.discard(event.tool_call_id)
                 # Tool completed — read updated state from store
                 updated_state = state_store.get_full_state(thread_id)
                 if updated_state and updated_state != shadow:
@@ -241,7 +251,6 @@ async def state_diff_stream(
                         yield StateSnapshotEvent(snapshot=updated_state)
                     shadow = copy.deepcopy(updated_state)
                 suppress_next_snapshot = True
-                active_store_call_id = None
             else:
                 # Non-store tool result: don't suppress next snapshot
                 suppress_next_snapshot = False
@@ -419,11 +428,11 @@ async def dynamic_chat_endpoint(request_body: AGUIRequest) -> StreamingResponse:
 
 @app.post("/state", tags=["AG-UI"])
 async def stateful_endpoint(request_body: AGUIRequest) -> StreamingResponse:
-    """Shared state endpoint with smart delta middleware and patch_chart support.
+    """Shared state endpoint — multi-widget dashboard with smart deltas.
 
     Reads forwardedProps.playground.smartDelta to toggle STATE_SNAPSHOT → STATE_DELTA
-    conversion. When enabled, small state changes are sent as JSON Patch operations
-    instead of full snapshots.
+    conversion. Dashboard tools all mutate state_store directly; the state_diff_stream
+    middleware computes JSON Patch diffs and emits granular STATE_DELTA events.
     """
     input_data = request_body.model_dump(exclude_none=True)
 
@@ -439,38 +448,38 @@ async def stateful_endpoint(request_body: AGUIRequest) -> StreamingResponse:
         f"messages={len(input_data.get('messages', []))}"
     )
 
-    # Seed state_store from client state so patch_chart can read it
+    # Seed state_store from client state
     if request_state:
         normalized = _normalize_state(copy.deepcopy(request_state))
-        if "chart" in normalized and isinstance(normalized["chart"], dict):
-            state_store.store_chart(normalized["chart"], thread_id)
+        # Dashboard state
+        if "dashboard" in normalized and isinstance(normalized["dashboard"], dict):
+            state_store.store_dashboard(normalized["dashboard"], thread_id)
+        # Legacy migration: single chart → wrap into dashboard
+        elif "chart" in normalized and isinstance(normalized["chart"], dict):
+            dashboard = state_store.get_dashboard(thread_id)
+            if not dashboard.get("widgets"):
+                wid = f"w-{dashboard.get('nextId', 1)}"
+                dashboard["nextId"] = dashboard.get("nextId", 1) + 1
+                dashboard["widgets"] = {wid: normalized["chart"]}
+                dashboard["layout"] = [{"i": wid, "x": 0, "y": 0, "w": 6, "h": 4, "minW": 3, "minH": 2}]
+                state_store.store_dashboard(dashboard, thread_id)
 
-    # WORKAROUND: Framework bug — PredictiveStateHandler.__init__ does
-    # `self.current_state = current_state or {}` which creates a DETACHED dict
-    # when current_state is empty (falsy). This breaks the reference to
-    # flow.current_state, so apply_pending_updates() never updates the flow,
-    # and StateSnapshotEvent is never emitted after tool completion.
-    # Fix: ensure input_data["state"] is non-empty so flow.current_state starts
-    # truthy and the reference is preserved.
+    # Ensure state is non-empty so framework flow reference works
     if not input_data.get("state"):
-        input_data["state"] = {"chart": None}
+        input_data["state"] = {"dashboard": None}
 
-    # Create a fresh stateful agent per request
-    stateful_agent_wrapper = create_stateful_agent()
-    base_agent = stateful_agent_wrapper.agent
-    config = AgentConfig(
-        predict_state_config=stateful_agent_wrapper.config.predict_state_config,
-    )
+    # Create dashboard agent per request (no predict_state_config — all tools mutate store)
+    dashboard_wrapper = create_dashboard_agent()
+    base_agent = dashboard_wrapper.agent
+    config = AgentConfig()
 
     encoder = EventEncoder()
 
     async def event_generator() -> AsyncGenerator[str]:
-        # Set active thread for tool functions (patch_chart, get_chart_info)
         token = state_store.set_active_thread(thread_id)
         event_count = 0
         raw_events = run_agent_stream(input_data, base_agent, config)
 
-        # Wrap through state diff middleware
         processed_events = state_diff_stream(
             raw_events,
             thread_id=thread_id,
