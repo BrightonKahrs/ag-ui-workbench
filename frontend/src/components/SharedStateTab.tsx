@@ -30,6 +30,7 @@ export default function SharedStateTab({ onEvents, toggles }: Props) {
     updateState,
     clearState,
     messages,
+    toolCalls,
   } = useSharedState("/state", toggles);
 
   const [input, setInput] = useState("");
@@ -181,7 +182,7 @@ export default function SharedStateTab({ onEvents, toggles }: Props) {
             chatOpen ? "w-80" : "w-0 border-r-0"
           }`}
         >
-          <div className="w-80 flex-1 flex flex-col">
+          <div className="w-80 flex-1 flex flex-col min-h-0">
             {/* Collapse arrow inside panel */}
             <div className="flex justify-end px-2 pt-1 shrink-0">
               <button
@@ -235,6 +236,32 @@ export default function SharedStateTab({ onEvents, toggles }: Props) {
                   </div>
                 </div>
               ))}
+
+              {/* Tool Calls */}
+              {toolCalls.length > 0 && (
+                <div className="space-y-1.5">
+                  {toolCalls.map((tc) => (
+                    <div key={tc.id} className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px]">
+                          {tc.status === "calling" ? "⏳" : tc.status === "complete" ? "✅" : "❌"}
+                        </span>
+                        <span className="text-[10px] font-medium text-amber-800">{tc.name}</span>
+                      </div>
+                      {tc.args && (
+                        <pre className="text-[9px] text-amber-700 mt-1 whitespace-pre-wrap break-all max-h-16 overflow-auto">
+                          {tc.args}
+                        </pre>
+                      )}
+                      {tc.result && (
+                        <pre className="text-[9px] text-green-700 mt-1 bg-green-50 rounded p-1 whitespace-pre-wrap break-all max-h-16 overflow-auto">
+                          {tc.result}
+                        </pre>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
 
               {error && (
                 <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2">

@@ -18,6 +18,16 @@ import type {
 import { AGUIEventType } from "../types/ag-ui";
 import { streamAgentResponse } from "../utils/sse-client";
 
+export type ToolCallStatus = "calling" | "complete" | "error";
+
+export interface SharedToolCall {
+  id: string;
+  name: string;
+  args: string;
+  result?: string;
+  status: ToolCallStatus;
+}
+
 export interface SharedStateReturn {
   state: Record<string, unknown>;
   events: TimestampedEvent[];
@@ -29,6 +39,7 @@ export interface SharedStateReturn {
   clearEvents: () => void;
   cancelRun: () => void;
   messages: Array<{ id: string; role: "user" | "assistant"; content: string }>;
+  toolCalls: SharedToolCall[];
 }
 
 const MAX_EVENTS = 2000;
@@ -44,6 +55,7 @@ export function useSharedState(
   const [messages, setMessages] = useState<
     Array<{ id: string; role: "user" | "assistant"; content: string }>
   >([]);
+  const [toolCalls, setToolCalls] = useState<SharedToolCall[]>([]);
 
   const abortRef = useRef<AbortController | null>(null);
   const eventCounterRef = useRef(0);
@@ -186,6 +198,41 @@ export function useSharedState(
               break;
             }
 
+            case AGUIEventType.TOOL_CALL_START: {
+              setToolCalls((prev) => [
+                ...prev,
+                { id: event.toolCallId, name: event.toolCallName, args: "", status: "calling" },
+              ]);
+              break;
+            }
+
+            case AGUIEventType.TOOL_CALL_ARGS: {
+              setToolCalls((prev) =>
+                prev.map((tc) =>
+                  tc.id === event.toolCallId ? { ...tc, args: tc.args + event.delta } : tc
+                )
+              );
+              break;
+            }
+
+            case AGUIEventType.TOOL_CALL_END: {
+              setToolCalls((prev) =>
+                prev.map((tc) =>
+                  tc.id === event.toolCallId ? { ...tc, status: "complete" } : tc
+                )
+              );
+              break;
+            }
+
+            case AGUIEventType.TOOL_CALL_RESULT: {
+              setToolCalls((prev) =>
+                prev.map((tc) =>
+                  tc.id === event.toolCallId ? { ...tc, result: event.content, status: "complete" } : tc
+                )
+              );
+              break;
+            }
+
             default:
               break;
           }
@@ -208,6 +255,7 @@ export function useSharedState(
     setState({});
     stateRef.current = {};
     setMessages([]);
+    setToolCalls([]);
     conversationRef.current = [];
     threadIdRef.current = null;
   }, []);
@@ -244,5 +292,6 @@ export function useSharedState(
     clearEvents,
     cancelRun,
     messages,
+    toolCalls,
   };
 }
