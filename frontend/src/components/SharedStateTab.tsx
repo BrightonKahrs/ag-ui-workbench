@@ -165,7 +165,7 @@ export default function SharedStateTab({ onEvents, toggles }: Props) {
   const [rawStateOpen, setRawStateOpen] = useState(false);
 
   return (
-    <div className="flex-1 flex flex-col">
+    <div className="flex-1 flex flex-col min-h-0">
       {/* Toolbar */}
       <div className="bg-white border-b border-gray-200 px-4 py-2 flex items-center justify-between">
         <p className="text-xs text-gray-400">
@@ -174,7 +174,7 @@ export default function SharedStateTab({ onEvents, toggles }: Props) {
         </p>
       </div>
 
-      <div className="flex-1 flex overflow-hidden relative">
+      <div className="flex-1 flex overflow-hidden relative min-h-0">
         {/* Left: Chat Panel — slides in/out */}
         <div
           className={`flex flex-col border-r border-gray-200 bg-white transition-all duration-300 ease-in-out overflow-hidden ${
@@ -282,7 +282,7 @@ export default function SharedStateTab({ onEvents, toggles }: Props) {
 
         {/* Left: Raw JSON State panel — flies in/out */}
         <div
-          className={`flex flex-col border-r border-gray-200 bg-white transition-all duration-300 ease-in-out overflow-hidden ${
+          className={`flex flex-col border-r border-gray-200 bg-white transition-all duration-300 ease-in-out overflow-hidden min-h-0 ${
             rawStateOpen ? "w-72" : "w-0 border-r-0"
           }`}
         >
