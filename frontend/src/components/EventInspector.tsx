@@ -22,15 +22,15 @@ function getCategoryPrefix(type: string): string {
 
 function getCategoryColor(cat: string): string {
   switch (cat) {
-    case "REQUEST": return "text-amber-400 bg-amber-950 border-amber-900";
-    case "RUN": return "text-blue-400 bg-blue-950 border-blue-900";
-    case "TEXT_MESSAGE": return "text-green-400 bg-green-950 border-green-900";
-    case "TOOL_CALL": return "text-yellow-400 bg-yellow-950 border-yellow-900";
-    case "STATE": return "text-purple-400 bg-purple-950 border-purple-900";
-    case "STEP": return "text-cyan-400 bg-cyan-950 border-cyan-900";
-    case "ACTIVITY": return "text-teal-400 bg-teal-950 border-teal-900";
-    case "REASONING": return "text-orange-400 bg-orange-950 border-orange-900";
-    default: return "text-gray-400 bg-gray-800 border-gray-700";
+    case "REQUEST": return "text-amber-700 bg-amber-50 border-amber-200";
+    case "RUN": return "text-blue-700 bg-blue-50 border-blue-200";
+    case "TEXT_MESSAGE": return "text-green-700 bg-green-50 border-green-200";
+    case "TOOL_CALL": return "text-yellow-700 bg-yellow-50 border-yellow-200";
+    case "STATE": return "text-purple-700 bg-purple-50 border-purple-200";
+    case "STEP": return "text-cyan-700 bg-cyan-50 border-cyan-200";
+    case "ACTIVITY": return "text-teal-700 bg-teal-50 border-teal-200";
+    case "REASONING": return "text-orange-700 bg-orange-50 border-orange-200";
+    default: return "text-gray-600 bg-gray-50 border-gray-200";
   }
 }
 
@@ -472,7 +472,7 @@ export default function EventInspector({ events }: Props) {
   const renderEvent = (te: TimestampedEvent, indent: boolean = false) => {
     const isRequest = !!te.request;
     const colorClass = isRequest
-      ? "text-amber-400 bg-amber-950 border-amber-900"
+      ? "text-amber-700 bg-amber-50 border-amber-200"
       : getEventColor(te.event.type);
     const icon = isRequest ? "📤" : getEventIcon(te.event.type);
     const label = isRequest ? "POST Request → Backend" : te.event.type;
@@ -488,29 +488,28 @@ export default function EventInspector({ events }: Props) {
           return parts.join(" · ");
         })()
       : getEventSummary(te.event);
-    // For requests, show the full request body when expanded
     const expandedContent = isRequest ? te.request : te.event;
 
     return (
       <div
         key={te.id}
-        className={`rounded px-2 py-1 cursor-pointer transition-colors hover:opacity-90 ${colorClass} ${indent ? "ml-3 border-l-2 border-current/20" : ""}`}
+        className={`rounded-lg px-2.5 py-1.5 cursor-pointer transition-colors hover:opacity-80 border ${colorClass} ${indent ? "ml-3" : ""}`}
         onClick={(e) => { e.stopPropagation(); toggleEvent(te.id); }}
       >
         <div className="flex items-center gap-2">
           <span className="text-xs">{icon}</span>
-          <span className="text-[11px] font-mono font-bold flex-1 truncate">
+          <span className="text-[11px] font-mono font-semibold flex-1 truncate">
             {label}
           </span>
-          <span className="text-[10px] opacity-60 font-mono">
+          <span className="text-[10px] opacity-50 font-mono">
             {formatTimestamp(te.timestamp)}
           </span>
         </div>
-        <div className="text-[10px] opacity-70 mt-0.5 truncate pl-5">
+        <div className="text-[10px] opacity-60 mt-0.5 truncate pl-5">
           {summary}
         </div>
         {expandedEvents.has(te.id) && (
-          <pre className="mt-1 text-[10px] bg-black/30 rounded p-2 overflow-x-auto max-h-40 overflow-y-auto">
+          <pre className="mt-1.5 text-[10px] bg-gray-100 border border-gray-200 rounded-lg p-2 overflow-x-auto max-h-40 overflow-y-auto text-gray-700 font-mono">
             {JSON.stringify(expandedContent, null, 2)}
           </pre>
         )}
@@ -521,39 +520,39 @@ export default function EventInspector({ events }: Props) {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="p-3 border-b border-gray-800">
+      <div className="p-3 border-b border-gray-200">
         <div className="flex items-center justify-between mb-2">
-          <h2 className="text-sm font-semibold text-gray-300">
+          <h2 className="text-sm font-semibold text-gray-700">
             📡 Event Inspector
           </h2>
-          <span className="text-xs text-gray-500">{events.length} events</span>
+          <span className="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">{events.length}</span>
         </div>
         <input
           type="text"
           placeholder="Filter events..."
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
-          className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 placeholder-gray-600 focus:outline-none focus:border-purple-500"
+          className="w-full bg-gray-50 border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs text-gray-700 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-200 focus:border-brand-300"
         />
         <label className="flex items-center gap-2 mt-2 text-xs text-gray-500">
           <input
             type="checkbox"
             checked={autoScroll}
             onChange={(e) => setAutoScroll(e.target.checked)}
-            className="accent-purple-500"
+            className="accent-indigo-500 rounded"
           />
           Auto-scroll
         </label>
         <div className="flex items-center gap-1 mt-2">
-          <span className="text-[10px] text-gray-500 mr-1">View:</span>
+          <span className="text-[10px] text-gray-400 mr-1">View:</span>
           {(["sequential", "grouped"] as ViewMode[]).map((mode) => (
             <button
               key={mode}
               onClick={() => setViewMode(mode)}
-              className={`text-[10px] px-2 py-0.5 rounded font-mono transition-colors ${
+              className={`text-[10px] px-2 py-0.5 rounded-md font-mono transition-colors ${
                 viewMode === mode
-                  ? "bg-purple-600 text-white"
-                  : "bg-gray-800 text-gray-400 hover:text-gray-300"
+                  ? "bg-brand-500 text-white"
+                  : "bg-gray-100 text-gray-500 hover:text-gray-700"
               }`}
             >
               {mode}
@@ -565,52 +564,48 @@ export default function EventInspector({ events }: Props) {
       {/* Event List */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto event-scroll p-2 space-y-1">
         {filteredEvents.length === 0 ? (
-          <div className="text-center text-gray-600 text-sm py-8">
+          <div className="text-center text-gray-400 text-sm py-8">
             No events yet. Send a message to see AG-UI events stream in.
           </div>
         ) : runChains ? (
-          /* Per-run chain view with interleaved request entries */
           (() => {
             let runNumber = 0;
             return runChains.map((item) => {
-              // Standalone request entry
               if (item.kind === "request") {
                 return renderEvent(item.entry, false);
               }
 
-              // Run chain
               const chain = item;
               runNumber++;
               const thisRunNumber = runNumber;
               const isRunExpanded = expandedRuns.has(chain.id);
               const statusIcon = chain.hasError ? "❌" : chain.isComplete ? "✅" : "⏳";
               const statusColor = chain.hasError
-                ? "border-red-800 bg-red-950/50"
+                ? "border-red-200 bg-red-50"
                 : chain.isComplete
-                ? "border-blue-800 bg-blue-950/50"
-                : "border-yellow-800 bg-yellow-950/50";
+                ? "border-blue-200 bg-blue-50"
+                : "border-amber-200 bg-amber-50";
               const statusText = chain.hasError
-                ? "text-red-400"
+                ? "text-red-700"
                 : chain.isComplete
-                ? "text-blue-400"
-                : "text-yellow-400";
+                ? "text-blue-700"
+                : "text-amber-700";
 
               return (
                 <div key={chain.id} className="space-y-0.5">
-                  {/* Run chain header */}
                   <div
-                    className={`rounded-lg px-2 py-1.5 cursor-pointer transition-colors border ${statusColor} hover:opacity-90`}
+                    className={`rounded-lg px-2.5 py-1.5 cursor-pointer transition-colors border ${statusColor} hover:opacity-80`}
                     onClick={() => toggleRun(chain.id)}
                   >
                     <div className="flex items-center gap-2">
-                      <span className="text-[10px] opacity-60 select-none">
+                      <span className="text-[10px] opacity-50 select-none">
                         {isRunExpanded ? "▼" : "▶"}
                       </span>
                       <span className="text-xs">{statusIcon}</span>
-                      <span className={`text-xs font-bold ${statusText}`}>
+                      <span className={`text-xs font-semibold ${statusText}`}>
                         Run {thisRunNumber}
                       </span>
-                      <span className="text-[10px] font-mono bg-black/30 rounded px-1.5 py-0.5">
+                      <span className="text-[10px] font-mono bg-white/60 border border-gray-200 rounded px-1.5 py-0.5 text-gray-500">
                         {chain.events.length}
                       </span>
                       {chain.threadId && (
@@ -624,7 +619,6 @@ export default function EventInspector({ events }: Props) {
                     </div>
                   </div>
 
-                {/* Expanded run — show sub-groups at same indent level */}
                 {isRunExpanded && (
                   <div className="pl-3 space-y-0.5">
                     {chain.subGroups.map((group) => {
@@ -639,20 +633,20 @@ export default function EventInspector({ events }: Props) {
                       return (
                         <div key={group.id} className="space-y-0.5">
                           <div
-                            className={`rounded px-2 py-1 cursor-pointer transition-colors border ${getCategoryColor(group.category)} hover:opacity-90`}
+                            className={`rounded-lg px-2.5 py-1 cursor-pointer transition-colors border ${getCategoryColor(group.category)} hover:opacity-80`}
                             onClick={() => toggleGroup(group.id)}
                           >
                             <div className="flex items-center gap-2">
-                              <span className="text-[10px] opacity-60 select-none">
+                              <span className="text-[10px] opacity-50 select-none">
                                 {isExpanded ? "▼" : "▶"}
                               </span>
                               <span className="text-xs">
                                 {getCategoryIcon(group.category)}
                               </span>
-                              <span className="text-xs font-mono font-bold">
+                              <span className="text-xs font-mono font-semibold">
                                 {group.category}
                               </span>
-                              <span className="text-[10px] font-mono bg-black/30 rounded px-1.5 py-0.5">
+                              <span className="text-[10px] font-mono bg-white/60 border border-gray-200 rounded px-1.5 py-0.5 text-gray-500">
                                 {group.events.length}
                               </span>
                               {summary && (
@@ -666,7 +660,7 @@ export default function EventInspector({ events }: Props) {
                             </div>
                           </div>
                           {isExpanded && (
-                            <div className="pl-3 border-l-2 border-current/20 ml-1 space-y-0.5">
+                            <div className="pl-3 border-l-2 border-gray-200 ml-1 space-y-0.5">
                               {(() => {
                                 const isFullyExpanded = fullyExpandedGroups.has(group.id);
                                 const visibleEvents = isFullyExpanded
@@ -678,7 +672,7 @@ export default function EventInspector({ events }: Props) {
                                     {visibleEvents.map((te) => renderEvent(te, false))}
                                     {!isFullyExpanded && hiddenCount > 0 && (
                                       <button
-                                        className="text-[10px] text-gray-500 hover:text-gray-300 py-1 px-2 rounded bg-gray-800/50 hover:bg-gray-800 transition-colors"
+                                        className="text-[10px] text-gray-500 hover:text-gray-700 py-1 px-2 rounded-md bg-gray-100 hover:bg-gray-200 transition-colors"
                                         onClick={(e) => {
                                           e.stopPropagation();
                                           setFullyExpandedGroups((prev) => new Set([...prev, group.id]));
@@ -702,7 +696,6 @@ export default function EventInspector({ events }: Props) {
           });
           })()
         ) : (
-          /* Flat view — when filtering */
           filteredEvents.map((te) => renderEvent(te))
         )}
       </div>

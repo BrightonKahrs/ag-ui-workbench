@@ -135,31 +135,31 @@ export default function McpAppViewer({ app }: Props) {
 
   return (
     <div className="flex justify-start">
-      <div className="border border-purple-800 bg-purple-950/30 rounded-lg max-w-[90%] w-full overflow-hidden">
+      <div className="border border-brand-200 bg-brand-50 rounded-lg max-w-[90%] w-full overflow-hidden">
         {/* Header */}
         <button
           onClick={() => setExpanded(!expanded)}
-          className="w-full flex items-center gap-2 px-4 py-2 text-left hover:bg-purple-900/20 transition-colors"
+          className="w-full flex items-center gap-2 px-4 py-2 text-left hover:bg-brand-50 transition-colors"
         >
-          <span className="text-xs font-semibold text-purple-400">
+          <span className="text-xs font-semibold text-brand-500">
             {displayName}
           </span>
-          <span className="text-[10px] text-purple-600 ml-auto">
+          <span className="text-[10px] text-brand-500 ml-auto">
             MCP App • {expanded ? "▾" : "▸"}
           </span>
         </button>
 
         {/* Content */}
         {expanded && (
-          <div className="border-t border-purple-800/50">
+          <div className="border-t border-brand-200">
             {loading && (
-              <div className="flex items-center justify-center py-8 text-purple-400 text-sm">
+              <div className="flex items-center justify-center py-8 text-brand-500 text-sm">
                 <span className="animate-spin mr-2">⏳</span> Loading interactive
                 UI...
               </div>
             )}
             {error && (
-              <div className="px-4 py-3 text-red-400 text-xs">
+              <div className="px-4 py-3 text-red-700 text-xs">
                 ❌ Failed to load app: {error}
               </div>
             )}
@@ -170,7 +170,7 @@ export default function McpAppViewer({ app }: Props) {
                 sandbox="allow-scripts"
                 title={displayName}
                 className="w-full border-0"
-                style={{ height: "420px", background: "#0f172a" }}
+                style={{ height: "420px", background: "#ffffff" }}
                 onLoad={onIframeLoad}
               />
             )}

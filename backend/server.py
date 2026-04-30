@@ -1,7 +1,7 @@
-"""AG-UI Playground Backend Server.
+"""AG-UI Workbench Backend Server.
 
 Exposes AG-UI endpoints:
-- /chat      - Dynamic chat endpoint (reads forwardedProps for model mode, HITL, etc.)
+- /chat      - Dynamic chat endpoint (reads forwardedProps for provider, model mode, HITL, etc.)
 - /state     - Shared state agent (data viz) with predictive updates + smart deltas
 
 Managed with UV: `uv run server.py`
@@ -338,7 +338,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="AG-UI Playground",
+    title="AG-UI Workbench",
     description="Educational demo of the AG-UI protocol with Microsoft Agent Framework",
     version="1.0.0",
     lifespan=lifespan,
@@ -356,7 +356,7 @@ app.add_middleware(
 
 @app.post("/chat", tags=["AG-UI"])
 async def dynamic_chat_endpoint(request_body: AGUIRequest) -> StreamingResponse:
-    """Dynamic chat endpoint that reads forwardedProps for HITL, model mode, etc."""
+    """Dynamic chat endpoint that reads forwardedProps for HITL, model mode, provider, etc."""
     input_data = request_body.model_dump(exclude_none=True)
 
     forwarded = input_data.get("forwarded_props") or {}
@@ -365,10 +365,12 @@ async def dynamic_chat_endpoint(request_body: AGUIRequest) -> StreamingResponse:
     model_mode = playground.get("modelMode", "chat")
     hitl = playground.get("humanInTheLoop", False)
     reasoning_effort = playground.get("reasoningEffort", "medium")
+    provider = playground.get("provider", "foundry")
+    model = playground.get("model", None)
 
     logger.info(
-        f"[/chat] model_mode={model_mode}, hitl={hitl}, reasoning_effort={reasoning_effort}, "
-        f"messages={len(input_data.get('messages', []))}"
+        f"[/chat] provider={provider}, model={model}, model_mode={model_mode}, hitl={hitl}, "
+        f"reasoning_effort={reasoning_effort}, messages={len(input_data.get('messages', []))}"
     )
 
     base_agent = create_chat_agent(
@@ -376,6 +378,8 @@ async def dynamic_chat_endpoint(request_body: AGUIRequest) -> StreamingResponse:
         hitl=hitl,
         mcp_tools=mcp_tool,
         reasoning_effort=reasoning_effort,
+        provider=provider,
+        model=model,
     )
     config = AgentConfig(require_confirmation=hitl)
     encoder = EventEncoder()

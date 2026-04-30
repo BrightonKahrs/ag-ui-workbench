@@ -248,6 +248,29 @@ export type ModelMode = "chat" | "reasoning";
 
 export type ReasoningEffort = "low" | "medium" | "high";
 
+export type ToolDisplayMode = "inline" | "card" | "timeline";
+
+export type ReasoningDisplayMode = "hidden" | "summary" | "streaming";
+
+export type Provider = "foundry" | "openai" | "anthropic";
+
+export interface ProviderConfig {
+  provider: Provider;
+  model?: string;
+}
+
+export const PROVIDER_MODELS: Record<Provider, string[]> = {
+  foundry: ["gpt-4.1-mini", "gpt-4.1", "gpt-5-mini", "gpt-5"],
+  openai: ["gpt-4.1-mini", "gpt-4.1", "gpt-5-mini", "gpt-5", "o3-mini"],
+  anthropic: ["claude-sonnet-4-20250514", "claude-haiku-4-20250414"],
+};
+
+export const PROVIDER_LABELS: Record<Provider, string> = {
+  foundry: "Microsoft Foundry",
+  openai: "OpenAI",
+  anthropic: "Anthropic",
+};
+
 export interface FeatureToggles {
   streaming: boolean;
   toolCalls: boolean;
@@ -258,6 +281,10 @@ export interface FeatureToggles {
   stepEvents: boolean;
   modelMode: ModelMode;
   reasoningEffort: ReasoningEffort;
+  toolDisplayMode: ToolDisplayMode;
+  reasoningDisplayMode: ReasoningDisplayMode;
+  showTokenUsage: boolean;
+  providerConfig: ProviderConfig;
 }
 
 export const DEFAULT_TOGGLES: FeatureToggles = {
@@ -270,4 +297,11 @@ export const DEFAULT_TOGGLES: FeatureToggles = {
   stepEvents: true,
   modelMode: "chat",
   reasoningEffort: "medium",
+  toolDisplayMode: "card",
+  reasoningDisplayMode: "summary",
+  showTokenUsage: true,
+  providerConfig: {
+    provider: "foundry",
+    model: "gpt-4.1-mini",
+  },
 };

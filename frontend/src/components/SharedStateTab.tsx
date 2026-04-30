@@ -161,142 +161,201 @@ export default function SharedStateTab({ onEvents, toggles }: Props) {
     [selectedWidgetId, updateState],
   );
 
+  const [chatOpen, setChatOpen] = useState(true);
+  const [rawStateOpen, setRawStateOpen] = useState(false);
+
   return (
     <div className="flex-1 flex flex-col">
-      {/* Tab Description */}
-      <div className="bg-gray-850 border-b border-gray-800 px-4 py-2">
-        <p className="text-xs text-gray-500">
-          <strong className="text-gray-400">Dashboard Builder</strong> —
-          Multi-widget dashboard with shared state. Backend streams
-          STATE_SNAPSHOT/STATE_DELTA → widgets render live. Edit widgets below →
-          layout syncs on your next message.
+      {/* Toolbar */}
+      <div className="bg-white border-b border-gray-200 px-4 py-2 flex items-center justify-between">
+        <p className="text-xs text-gray-400">
+          <strong className="text-gray-500">Dashboard Builder</strong> —
+          Multi-widget dashboard with shared state.
         </p>
       </div>
 
-      <div className="flex-1 flex overflow-hidden">
-        {/* Left: Chat */}
-        <div className="w-80 flex flex-col border-r border-gray-800">
-          {/* Messages */}
-          <div className="flex-1 overflow-y-auto p-3 space-y-2">
-            {messages.length === 0 && (
-              <div className="text-center text-gray-600 py-6">
-                <p className="text-lg mb-2">📊 Dashboard Builder</p>
-                <p className="text-xs">
-                  Ask the agent to create widgets. Watch state stream in
-                  real-time.
-                </p>
-                <div className="mt-3 space-y-1 text-[10px] text-gray-700 text-left px-2">
-                  <p>Try:</p>
-                  <p className="text-gray-500">
-                    "Create a dashboard with monthly revenue and cost charts"
-                  </p>
-                  <p className="text-gray-500">
-                    "Add a pie chart of market share"
-                  </p>
-                  <p className="text-gray-500">
-                    "Change the first chart to a line chart"
-                  </p>
-                  <p className="text-gray-500">
-                    "Remove the second widget"
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {messages.map((msg) => (
-              <div
-                key={msg.id}
-                className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+      <div className="flex-1 flex overflow-hidden relative">
+        {/* Left: Chat Panel — slides in/out */}
+        <div
+          className={`flex flex-col border-r border-gray-200 bg-white transition-all duration-300 ease-in-out overflow-hidden ${
+            chatOpen ? "w-80" : "w-0 border-r-0"
+          }`}
+        >
+          <div className="w-80 flex-1 flex flex-col">
+            {/* Collapse arrow inside panel */}
+            <div className="flex justify-end px-2 pt-1 shrink-0">
+              <button
+                onClick={() => setChatOpen(false)}
+                className="w-5 h-5 flex items-center justify-center rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
+                title="Hide Chat"
               >
-                <div
-                  className={`max-w-[90%] rounded-lg px-3 py-2 ${
-                    msg.role === "user"
-                      ? "bg-purple-700 text-white"
-                      : "bg-gray-800 text-gray-200"
-                  }`}
-                >
-                  <div className="text-[10px] text-gray-400 font-semibold uppercase">
-                    {msg.role}
+                <span className="text-xs">‹</span>
+              </button>
+            </div>
+            {/* Messages */}
+            <div className="flex-1 overflow-y-auto p-3 pt-0 space-y-2">
+              {messages.length === 0 && (
+                <div className="text-center text-gray-400 py-6">
+                  <p className="text-lg mb-2">📊 Dashboard Builder</p>
+                  <p className="text-xs">
+                    Ask the agent to create widgets. Watch state stream in
+                    real-time.
+                  </p>
+                  <div className="mt-3 space-y-1 text-[10px] text-gray-700 text-left px-2">
+                    <p>Try:</p>
+                    <p className="text-gray-400">
+                      "Create a dashboard with monthly revenue and cost charts"
+                    </p>
+                    <p className="text-gray-400">
+                      "Add a pie chart of market share"
+                    </p>
+                    <p className="text-gray-400">
+                      "Change the first chart to a line chart"
+                    </p>
                   </div>
-                  <div className="text-xs whitespace-pre-wrap">{msg.content}</div>
                 </div>
-              </div>
-            ))}
+              )}
 
-            {error && (
-              <div className="bg-red-950 border border-red-800 rounded-lg px-3 py-2">
-                <div className="text-[10px] text-red-400">❌ {error}</div>
-              </div>
-            )}
+              {messages.map((msg) => (
+                <div
+                  key={msg.id}
+                  className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+                >
+                  <div
+                    className={`max-w-[90%] rounded-lg px-3 py-2 ${
+                      msg.role === "user"
+                        ? "bg-brand-600 text-white"
+                        : "bg-gray-100 text-gray-700"
+                    }`}
+                  >
+                    <div className="text-[10px] text-gray-500 font-semibold uppercase">
+                      {msg.role}
+                    </div>
+                    <div className="text-xs whitespace-pre-wrap">{msg.content}</div>
+                  </div>
+                </div>
+              ))}
 
-            <div ref={messagesEndRef} />
-          </div>
+              {error && (
+                <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                  <div className="text-[10px] text-red-700">❌ {error}</div>
+                </div>
+              )}
 
-          {/* Input */}
-          <div className="border-t border-gray-800 p-2">
-            <form onSubmit={handleSubmit} className="flex gap-1">
-              <input
-                type="text"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                placeholder="Describe your dashboard..."
-                disabled={isRunning}
-                className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-purple-500 disabled:opacity-50"
-              />
-              <button
-                type="submit"
-                disabled={!input.trim() || isRunning}
-                className="px-3 py-1.5 bg-purple-600 text-white rounded-lg text-xs font-medium hover:bg-purple-500 disabled:opacity-50"
-              >
-                {isRunning ? "..." : "Send"}
-              </button>
-              <button
-                type="button"
-                onClick={handleClear}
-                className="px-2 py-1.5 bg-gray-800 text-gray-400 rounded-lg text-xs hover:text-white"
-                title="Reset dashboard"
-              >
-                ↺
-              </button>
-            </form>
+              <div ref={messagesEndRef} />
+            </div>
+
+            {/* Input */}
+            <div className="border-t border-gray-200 p-2">
+              <form onSubmit={handleSubmit} className="flex gap-1">
+                <input
+                  type="text"
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  placeholder="Describe your dashboard..."
+                  disabled={isRunning}
+                  className="flex-1 bg-gray-100 border border-gray-200 rounded-lg px-2 py-1.5 text-xs text-gray-900 placeholder-gray-400 focus:outline-none focus:border-brand-300 disabled:opacity-50"
+                />
+                <button
+                  type="submit"
+                  disabled={!input.trim() || isRunning}
+                  className="px-3 py-1.5 bg-brand-500 text-white rounded-lg text-xs font-medium hover:bg-brand-600 disabled:opacity-50"
+                >
+                  {isRunning ? "..." : "Send"}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleClear}
+                  className="px-2 py-1.5 bg-gray-100 text-gray-500 rounded-lg text-xs hover:text-gray-900"
+                  title="Reset dashboard"
+                >
+                  ↺
+                </button>
+              </form>
+            </div>
           </div>
         </div>
+        {/* Chat expand tab (only when closed) */}
+        {!chatOpen && (
+          <ExpandTab label="Chat" side="left" onClick={() => setChatOpen(true)} />
+        )}
 
-        {/* Right: Dashboard Grid + Editor */}
+        {/* Left: Raw JSON State panel — flies in/out */}
+        <div
+          className={`flex flex-col border-r border-gray-200 bg-white transition-all duration-300 ease-in-out overflow-hidden ${
+            rawStateOpen ? "w-72" : "w-0 border-r-0"
+          }`}
+        >
+          <div className="w-72 flex-1 flex flex-col">
+            {/* Collapse arrow inside panel */}
+            <div className="flex justify-end px-2 pt-1 shrink-0">
+              <button
+                onClick={() => setRawStateOpen(false)}
+                className="w-5 h-5 flex items-center justify-center rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
+                title="Hide Raw JSON"
+              >
+                <span className="text-xs">‹</span>
+              </button>
+            </div>
+            <div className="px-3 pb-1 flex items-center gap-2 shrink-0">
+              <span className="text-[10px] text-gray-500 font-medium">
+                Raw State JSON
+              </span>
+              {hasUnsentChanges && (
+                <span className="text-[10px] text-amber-700">● modified</span>
+              )}
+            </div>
+            <pre className="flex-1 text-[10px] text-gray-500 bg-gray-50 p-3 overflow-auto mx-3 mb-3 rounded font-mono">
+              {JSON.stringify(state, null, 2)}
+            </pre>
+          </div>
+        </div>
+        {/* Raw JSON expand tab (only when closed) */}
+        {!rawStateOpen && (
+          <ExpandTab label="Raw JSON" side="left" onClick={() => setRawStateOpen(true)} />
+        )}
+
+        {/* Center: Dashboard Grid + Editor */}
         <div className="flex-1 flex flex-col overflow-hidden">
           {/* Dashboard Header */}
           <div className="px-4 pt-3 pb-1 flex items-center justify-between shrink-0">
             <div className="flex items-center gap-2">
-              <h2 className="text-sm font-semibold text-white">
+              <h2 className="text-sm font-semibold text-gray-900">
                 {dashboard.title || "Dashboard"}
               </h2>
-              <span className="text-[10px] bg-gray-800 text-gray-500 px-2 py-0.5 rounded">
+              <span className="text-[10px] bg-gray-100 text-gray-400 px-2 py-0.5 rounded">
                 {widgetCount} widget{widgetCount !== 1 ? "s" : ""}
               </span>
               {isRunning && (
-                <span className="text-[10px] text-purple-400 animate-pulse">
+                <span className="text-[10px] text-brand-500 animate-pulse">
                   ● Streaming...
                 </span>
               )}
               {hasUnsentChanges && (
-                <span className="text-[10px] bg-amber-950 text-amber-300 px-2 py-0.5 rounded">
+                <span className="text-[10px] bg-amber-50 text-amber-700 px-2 py-0.5 rounded">
                   ⚡ Edited locally (syncs on next message)
                 </span>
               )}
             </div>
           </div>
 
-          {/* Widget Editor (when selected) */}
-          {selectedWidget && selectedWidgetId && (
-            <div className="mx-3 mb-1 shrink-0">
+          {/* Widget Editor — flies in from top */}
+          <div
+            className={`mx-3 shrink-0 transition-all duration-300 ease-in-out overflow-hidden ${
+              selectedWidget && selectedWidgetId
+                ? "max-h-48 opacity-100 mb-1"
+                : "max-h-0 opacity-0 mb-0"
+            }`}
+          >
+            {selectedWidget && selectedWidgetId && (
               <WidgetEditor
                 widgetId={selectedWidgetId}
                 widget={selectedWidget}
                 onUpdate={(patch) => updateWidget(selectedWidgetId, patch)}
                 onClose={() => setSelectedWidgetId(null)}
               />
-            </div>
-          )}
+            )}
+          </div>
 
           {/* Grid Area */}
           <div className="flex-1 min-h-0 overflow-auto">
@@ -308,22 +367,30 @@ export default function SharedStateTab({ onEvents, toggles }: Props) {
               onRemoveWidget={removeWidget}
             />
           </div>
-
-          {/* Raw State (collapsible) */}
-          <details className="border-t border-gray-800 shrink-0">
-            <summary className="px-3 py-2 text-[10px] text-gray-500 cursor-pointer hover:text-gray-400 select-none">
-              Raw State JSON
-              {hasUnsentChanges && (
-                <span className="text-amber-400 ml-1">● modified</span>
-              )}
-            </summary>
-            <pre className="text-[10px] text-gray-600 bg-gray-950 p-3 overflow-auto max-h-32 mx-3 mb-3 rounded">
-              {JSON.stringify(state, null, 2)}
-            </pre>
-          </details>
         </div>
       </div>
     </div>
+  );
+}
+
+/** Expand tab shown only when a panel is collapsed */
+function ExpandTab({ label, side, onClick }: { label: string; side: "left" | "right"; onClick: () => void }) {
+  const arrow = side === "left" ? "›" : "‹";
+  return (
+    <button
+      onClick={onClick}
+      className={`flex items-start pt-28 justify-center px-1.5 bg-white border border-gray-200 hover:bg-indigo-50 hover:border-indigo-200 transition-colors text-gray-500 hover:text-indigo-600 self-stretch shrink-0 ${
+        side === "left" ? "rounded-r-md border-l-0" : "rounded-l-md border-r-0"
+      }`}
+      title={`Show ${label}`}
+    >
+      <span
+        className="text-[10px] font-medium tracking-wide"
+        style={{ writingMode: "vertical-lr", transform: side === "left" ? "rotate(180deg)" : "none" }}
+      >
+        {label} {arrow}
+      </span>
+    </button>
   );
 }
 

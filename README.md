@@ -1,6 +1,6 @@
-# AG-UI Playground
+# AG-UI Workbench
 
-An educational demo showcasing the **AG-UI (Agent-User Interaction) Protocol** with **Microsoft Agent Framework** (Python) and **Azure AI Foundry**. Toggle features, inspect events, and understand how AG-UI works in real-time.
+A modern workbench for exploring the **AG-UI (Agent-User Interaction) Protocol** with **Microsoft Agent Framework** (Python). Configure providers, display modes, and behavior — then watch AG-UI events stream in real-time.
 
 ## What is AG-UI?
 

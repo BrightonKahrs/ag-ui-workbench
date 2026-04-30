@@ -50,17 +50,17 @@ function StageCard({
   activity: ActivityItem | undefined;
 }) {
   const borderColor = {
-    idle: "border-gray-700",
+    idle: "border-gray-200",
     running: "border-yellow-500 animate-pulse",
     completed: "border-green-500",
     failed: "border-red-500",
   }[status];
 
   const bgColor = {
-    idle: "bg-gray-900",
-    running: "bg-yellow-950",
-    completed: "bg-green-950",
-    failed: "bg-red-950",
+    idle: "bg-white",
+    running: "bg-yellow-50",
+    completed: "bg-green-50",
+    failed: "bg-red-50",
   }[status];
 
   const statusIcon = {
@@ -73,16 +73,16 @@ function StageCard({
   return (
     <div className={`rounded-lg border-2 p-4 ${borderColor} ${bgColor} transition-all duration-300`}>
       <div className="flex items-center justify-between mb-2">
-        <span className="text-lg font-semibold text-white">{stage.label}</span>
+        <span className="text-lg font-semibold text-gray-900">{stage.label}</span>
         <span className="text-xl">{statusIcon}</span>
       </div>
-      <p className="text-xs text-gray-400 mb-2">{stage.description}</p>
+      <p className="text-xs text-gray-500 mb-2">{stage.description}</p>
       {activity && (
-        <div className="text-xs text-gray-500 mt-1">
+        <div className="text-xs text-gray-400 mt-1">
           <span className={
-            status === "completed" ? "text-green-400" :
-            status === "failed" ? "text-red-400" :
-            status === "running" ? "text-yellow-400" : "text-gray-400"
+            status === "completed" ? "text-green-700" :
+            status === "failed" ? "text-red-700" :
+            status === "running" ? "text-yellow-700" : "text-gray-500"
           }>
             {status === "running" ? "Processing..." :
              status === "completed" ? "Done" :
@@ -134,15 +134,33 @@ export default function WorkflowTab({ toggles, onEvents }: Props) {
     (m: ChatMessage) => m.role === "assistant" && m.content,
   );
 
+  const [pipelineOpen, setPipelineOpen] = useState(true);
+  const [outputOpen, setOutputOpen] = useState(true);
+
   return (
     <div className="flex flex-col h-full">
-      {/* Pipeline Visualizer */}
-      <div className="p-4 border-b border-gray-800 bg-gray-950">
+      {/* Toolbar with panel toggles */}
+      <div className="bg-white border-b border-gray-200 px-4 py-2 flex items-center justify-between shrink-0">
+        <p className="text-xs text-gray-400">
+          <strong className="text-gray-500">Workflow</strong> — Research pipeline with STEP and ACTIVITY events.
+        </p>
+        <div className="flex items-center gap-1">
+          <InlineToggle label="Pipeline" isOpen={pipelineOpen} onClick={() => setPipelineOpen(!pipelineOpen)} />
+          <InlineToggle label="Output" isOpen={outputOpen} onClick={() => setOutputOpen(!outputOpen)} />
+        </div>
+      </div>
+
+      {/* Pipeline Visualizer — flies in/out from top */}
+      <div
+        className={`border-b border-gray-200 bg-gray-50 transition-all duration-300 ease-in-out overflow-hidden shrink-0 ${
+          pipelineOpen ? "max-h-64 opacity-100 p-4" : "max-h-0 opacity-0 p-0 border-b-0"
+        }`}
+      >
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider">
+          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider">
             Research Pipeline
           </h2>
-          <div className="flex items-center gap-2 text-xs text-gray-500">
+          <div className="flex items-center gap-2 text-xs text-gray-400">
             <span className="flex items-center gap-1">
               <span className="w-2 h-2 rounded-full bg-cyan-500"></span> STEP events
             </span>
@@ -166,7 +184,7 @@ export default function WorkflowTab({ toggles, onEvents }: Props) {
                   <StageCard stage={stage} status={status} activity={latestActivity} />
                 </div>
                 {idx < PIPELINE_STAGES.length - 1 && (
-                  <svg width="32" height="24" viewBox="0 0 32 24" fill="none" className="text-gray-600 flex-shrink-0">
+                  <svg width="32" height="24" viewBox="0 0 32 24" fill="none" className="text-gray-400 flex-shrink-0">
                     <path d="M4 12h20m0 0l-6-6m6 6l-6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                   </svg>
                 )}
@@ -176,47 +194,51 @@ export default function WorkflowTab({ toggles, onEvents }: Props) {
         </div>
       </div>
 
-      {/* Stage Outputs */}
-      <div ref={outputRef} className="flex-1 overflow-y-auto p-4 space-y-4">
-        {stageOutputs.length === 0 && !isRunning && (
-          <div className="text-center text-gray-500 mt-12">
-            <p className="text-4xl mb-4">🔬</p>
-            <p className="text-lg font-medium">Research Pipeline</p>
-            <p className="text-sm mt-2 max-w-md mx-auto">
-              Ask a question and watch it flow through 3 stages.
-              Each stage emits <span className="text-cyan-400">STEP_STARTED/FINISHED</span> and{" "}
-              <span className="text-teal-400">ACTIVITY_SNAPSHOT</span> events.
-            </p>
-          </div>
-        )}
-
-        {stageOutputs.map((msg: ChatMessage) => (
-          <div
-            key={msg.id}
-            className="bg-gray-800 rounded-lg p-4 border border-gray-700"
-          >
-            <div className="prose prose-invert prose-sm max-w-none whitespace-pre-wrap">
-              {msg.content}
+      {/* Stage Outputs — flies in/out */}
+      <div
+        className={`flex-1 overflow-y-auto transition-all duration-300 ease-in-out ${
+          outputOpen ? "opacity-100" : "opacity-0 max-h-0 overflow-hidden"
+        }`}
+      >
+        <div ref={outputRef} className="p-4 space-y-4 h-full overflow-y-auto">
+          {stageOutputs.length === 0 && !isRunning && (
+            <div className="text-center text-gray-400 mt-12">
+              <p className="text-4xl mb-4">🔬</p>
+              <p className="text-lg font-medium">Research Pipeline</p>
+              <p className="text-sm mt-2 max-w-md mx-auto">
+                Ask a question and watch it flow through 3 stages.
+              </p>
             </div>
-          </div>
-        ))}
+          )}
 
-        {isRunning && stageOutputs.length > 0 && (
-          <div className="flex items-center gap-2 text-gray-400 text-sm">
-            <span className="animate-pulse">⏳</span>
-            <span>Pipeline running...</span>
-          </div>
-        )}
+          {stageOutputs.map((msg: ChatMessage) => (
+            <div
+              key={msg.id}
+              className="bg-gray-100 rounded-lg p-4 border border-gray-200"
+            >
+              <div className="prose prose-gray prose-sm max-w-none whitespace-pre-wrap">
+                {msg.content}
+              </div>
+            </div>
+          ))}
 
-        {error && (
-          <div className="bg-red-950 border border-red-800 rounded-lg p-4 text-red-300 text-sm">
-            <strong>Error:</strong> {error}
-          </div>
-        )}
+          {isRunning && stageOutputs.length > 0 && (
+            <div className="flex items-center gap-2 text-gray-500 text-sm">
+              <span className="animate-pulse">⏳</span>
+              <span>Pipeline running...</span>
+            </div>
+          )}
+
+          {error && (
+            <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-red-700 text-sm">
+              <strong>Error:</strong> {error}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Input Area */}
-      <div className="p-4 border-t border-gray-800 bg-gray-900">
+      <div className="p-4 border-t border-gray-200 bg-white shrink-0">
         <form onSubmit={handleSubmit} className="flex gap-2">
           <input
             type="text"
@@ -224,24 +246,42 @@ export default function WorkflowTab({ toggles, onEvents }: Props) {
             onChange={(e) => setInput(e.target.value)}
             placeholder="Ask a research question..."
             disabled={isRunning}
-            className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent disabled:opacity-50"
+            className="flex-1 bg-gray-100 border border-gray-200 rounded-lg px-4 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent disabled:opacity-50"
           />
           <button
             type="submit"
             disabled={isRunning || !input.trim()}
-            className="px-5 py-2.5 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="px-5 py-2.5 bg-brand-500 text-white rounded-lg text-sm font-medium hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             {isRunning ? "Running..." : "Research"}
           </button>
           <button
             type="button"
             onClick={() => { clearMessages(); clearEvents(); }}
-            className="px-3 py-2.5 bg-gray-800 text-gray-400 rounded-lg text-sm hover:text-white hover:bg-gray-700 transition-colors"
+            className="px-3 py-2.5 bg-gray-100 text-gray-500 rounded-lg text-sm hover:text-gray-900 hover:bg-gray-200 transition-colors"
           >
             Clear
           </button>
         </form>
       </div>
     </div>
+  );
+}
+
+/** Small inline toggle for toolbar — shows label only when closed */
+function InlineToggle({ label, isOpen, onClick }: { label: string; isOpen: boolean; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`px-2.5 py-1 rounded-full text-[10px] font-medium transition-all duration-200 flex items-center gap-1 ${
+        isOpen
+          ? "bg-brand-50 text-brand-600 border border-brand-200"
+          : "bg-gray-50 text-gray-400 border border-gray-200 hover:text-gray-600"
+      }`}
+      title={isOpen ? `Hide ${label}` : `Show ${label}`}
+    >
+      <span>{isOpen ? "▾" : "▸"}</span>
+      {isOpen ? "" : label}
+    </button>
   );
 }

@@ -4,7 +4,8 @@
 
 @layer base {
   body {
-    @apply font-mono;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    @apply antialiased;
   }
 }
 
@@ -13,10 +14,13 @@
   width: 6px;
 }
 .event-scroll::-webkit-scrollbar-track {
-  @apply bg-gray-900;
+  @apply bg-gray-100;
 }
 .event-scroll::-webkit-scrollbar-thumb {
-  @apply bg-gray-700 rounded;
+  @apply bg-gray-300 rounded-full;
+}
+.event-scroll::-webkit-scrollbar-thumb:hover {
+  @apply bg-gray-400;
 }
 
 /* Typing cursor animation */
@@ -26,4 +30,9 @@
 }
 .cursor-blink {
   animation: blink 1s infinite;
+}
+
+/* Smooth transitions for settings */
+.settings-transition {
+  @apply transition-all duration-200 ease-in-out;
 }

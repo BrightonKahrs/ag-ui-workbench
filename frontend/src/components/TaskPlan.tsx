@@ -29,23 +29,23 @@ const STATUS_CONFIG: Record<
   string,
   { icon: string; color: string; bg: string; ring: string; pulse?: boolean }
 > = {
-  pending: { icon: "○", color: "text-gray-500", bg: "bg-gray-800", ring: "ring-gray-700" },
+  pending: { icon: "○", color: "text-gray-400", bg: "bg-gray-100", ring: "ring-gray-200" },
   in_progress: {
     icon: "◉",
-    color: "text-blue-400",
-    bg: "bg-blue-950",
-    ring: "ring-blue-700",
+    color: "text-blue-700",
+    bg: "bg-blue-50",
+    ring: "ring-blue-200",
     pulse: true,
   },
-  done: { icon: "✓", color: "text-green-400", bg: "bg-green-950", ring: "ring-green-700" },
-  failed: { icon: "✗", color: "text-red-400", bg: "bg-red-950", ring: "ring-red-700" },
-  cancelled: { icon: "⊘", color: "text-gray-600", bg: "bg-gray-900", ring: "ring-gray-800" },
+  done: { icon: "✓", color: "text-green-700", bg: "bg-green-50", ring: "ring-green-200" },
+  failed: { icon: "✗", color: "text-red-700", bg: "bg-red-50", ring: "ring-red-200" },
+  cancelled: { icon: "⊘", color: "text-gray-400", bg: "bg-white", ring: "ring-gray-200" },
 };
 
 const PLAN_STATUS_CONFIG: Record<string, { label: string; color: string }> = {
-  in_progress: { label: "In Progress", color: "text-blue-400" },
-  completed: { label: "Completed", color: "text-green-400" },
-  failed: { label: "Failed", color: "text-red-400" },
+  in_progress: { label: "In Progress", color: "text-blue-700" },
+  completed: { label: "Completed", color: "text-green-700" },
+  failed: { label: "Failed", color: "text-red-700" },
 };
 
 export default function TaskPlan({ plan }: Props) {
@@ -67,18 +67,18 @@ export default function TaskPlan({ plan }: Props) {
       {/* Plan Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-sm font-semibold text-white">{plan.title}</h2>
+          <h2 className="text-sm font-semibold text-gray-900">{plan.title}</h2>
           <span className={`text-[10px] ${planStatus.color}`}>{planStatus.label}</span>
         </div>
         <div className="text-right">
-          <span className="text-xs text-gray-400">
+          <span className="text-xs text-gray-500">
             {doneCount}/{total} tasks
           </span>
         </div>
       </div>
 
       {/* Progress Bar */}
-      <div className="w-full bg-gray-800 rounded-full h-2 overflow-hidden">
+      <div className="w-full bg-gray-100 rounded-full h-2 overflow-hidden">
         <div
           className={`h-2 rounded-full transition-all duration-500 ${
             plan.status === "failed" ? "bg-red-500" : "bg-green-500"
@@ -106,20 +106,20 @@ export default function TaskPlan({ plan }: Props) {
                 </span>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
-                    <span className="text-[10px] text-gray-600 font-mono">
+                    <span className="text-[10px] text-gray-400 font-mono">
                       {idx + 1}.
                     </span>
-                    <span className="text-xs font-medium text-white truncate">
+                    <span className="text-xs font-medium text-gray-900 truncate">
                       {task.title}
                     </span>
                   </div>
                   {task.description && (
-                    <p className="text-[10px] text-gray-500 mt-0.5 truncate">
+                    <p className="text-[10px] text-gray-400 mt-0.5 truncate">
                       {task.description}
                     </p>
                   )}
                   {task.result && (
-                    <p className="text-[10px] text-gray-400 mt-1 bg-gray-900/50 rounded px-2 py-1">
+                    <p className="text-[10px] text-gray-500 mt-1 bg-gray-100/50 rounded px-2 py-1">
                       {task.result}
                     </p>
                   )}

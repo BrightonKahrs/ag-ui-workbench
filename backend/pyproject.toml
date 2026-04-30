@@ -1,5 +1,5 @@
 [project]
-name = "ag-ui-playground"
+name = "ag-ui-workbench"
 version = "0.1.0"
 description = "AG-UI Playground - Educational demo of AG-UI protocol with Microsoft Agent Framework"
 requires-python = ">=3.10"

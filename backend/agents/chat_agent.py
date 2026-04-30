@@ -1,11 +1,11 @@
-"""Basic streaming chat agent for the AG-UI Playground."""
+"""Basic streaming chat agent for the AG-UI Workbench."""
 
 import os
 from typing import Optional
 
 from agent_framework import Agent, MCPStreamableHTTPTool
 from agent_framework.foundry import FoundryChatClient
-from agent_framework.openai import OpenAIChatOptions
+from agent_framework.openai import OpenAIChatClient, OpenAIChatOptions
 from azure.identity import DefaultAzureCredential
 
 from tools.demo_tools import (
@@ -18,38 +18,64 @@ from tools.demo_tools import (
 )
 
 
+def _create_client(provider: str = "foundry", model: str | None = None):
+    """Create a chat client for the specified provider.
+
+    Supports:
+    - foundry: Azure AI Foundry (default)
+    - openai: Direct OpenAI API
+    - anthropic: Anthropic via OpenAI-compatible endpoint
+    """
+    if provider == "openai":
+        api_key = os.environ.get("OPENAI_API_KEY", "")
+        resolved_model = model or "gpt-4.1-mini"
+        return OpenAIChatClient(model=resolved_model, api_key=api_key), resolved_model
+
+    elif provider == "anthropic":
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        resolved_model = model or "claude-sonnet-4-20250514"
+        return OpenAIChatClient(
+            model=resolved_model,
+            api_key=api_key,
+            base_url="https://api.anthropic.com/v1/",
+        ), resolved_model
+
+    else:  # foundry (default)
+        project_endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
+        credential = DefaultAzureCredential()
+        resolved_model = model or os.environ.get("FOUNDRY_MODEL_CHAT", "gpt-4.1-mini")
+        return FoundryChatClient(
+            project_endpoint=project_endpoint,
+            model=resolved_model,
+            credential=credential,
+        ), resolved_model
+
+
 def create_chat_agent(
     model_mode: str = "chat",
     hitl: bool = False,
     mcp_tools: Optional[MCPStreamableHTTPTool] = None,
     reasoning_effort: str = "medium",
+    provider: str = "foundry",
+    model: str | None = None,
 ) -> Agent:
-    """Create a basic chat agent with demo tools and optional MCP tools.
+    """Create a chat agent with configurable provider and demo tools.
 
     Args:
         model_mode: One of "chat" or "reasoning".
         hitl: If True, all tools require human approval before execution.
         mcp_tools: Optional MCPStreamableHTTPTool for connecting to local MCP server.
         reasoning_effort: Reasoning effort level ("low", "medium", "high") for reasoning models.
+        provider: Provider to use ("foundry", "openai", "anthropic").
+        model: Specific model name to use (overrides default for provider).
     """
-    project_endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
-    credential = DefaultAzureCredential()
-
-    if model_mode == "reasoning":
+    # For reasoning mode on Foundry, override model to reasoning variant
+    if model_mode == "reasoning" and provider == "foundry" and not model:
         model = os.environ.get("FOUNDRY_MODEL_REASONING", "o4-mini")
-    else:
-        model = os.environ.get("FOUNDRY_MODEL_CHAT", "gpt-4.1-mini")
 
-    chat_client = FoundryChatClient(
-        project_endpoint=project_endpoint,
-        model=model,
-        credential=credential,
-    )
+    chat_client, resolved_model = _create_client(provider, model)
 
-    # Configure reasoning options for reasoning models.
-    # gpt-5-mini supports reasoning.summary="auto" which streams readable
-    # reasoning content (response.reasoning_summary_text.delta events).
-    # The framework converts these into REASONING_* AG-UI events.
+    # Configure reasoning options for reasoning models
     default_options: OpenAIChatOptions | None = None
     if model_mode == "reasoning":
         default_options = OpenAIChatOptions(
@@ -88,8 +114,8 @@ Go ahead and use tools normally when they are helpful — the system will
 handle the approval flow automatically."""
 
     agent = Agent(
-        name="PlaygroundChatAgent",
-        instructions=f"""You are a helpful assistant in the AG-UI Playground demo.
+        name="WorkbenchChatAgent",
+        instructions=f"""You are a helpful assistant in the AG-UI Workbench.
 You demonstrate the AG-UI protocol features including streaming text, tool calls, and more.
 
 You have access to these local tools:

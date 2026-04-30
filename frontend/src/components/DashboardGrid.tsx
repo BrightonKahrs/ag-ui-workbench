@@ -83,10 +83,10 @@ function WidgetCard({
 }) {
   return (
     <div
-      className={`h-full flex flex-col bg-gray-900 rounded-lg border transition-colors overflow-hidden ${
+      className={`h-full flex flex-col bg-white rounded-lg border transition-colors overflow-hidden ${
         isSelected
-          ? "border-purple-500 shadow-lg shadow-purple-500/10"
-          : "border-gray-700 hover:border-gray-600"
+          ? "border-brand-500 shadow-lg shadow-brand-500/10"
+          : "border-gray-200 hover:border-gray-400"
       }`}
       onClick={(e) => {
         e.stopPropagation();
@@ -94,13 +94,13 @@ function WidgetCard({
       }}
     >
       {/* Widget Header */}
-      <div className="flex items-center justify-between px-2 py-1 border-b border-gray-800 bg-gray-850 shrink-0">
+      <div className="flex items-center justify-between px-2 py-1 border-b border-gray-200 bg-white shrink-0">
         <div className="flex items-center gap-1.5 min-w-0">
-          <span className="text-[9px] text-gray-600 font-mono">{widgetId}</span>
-          <span className="text-[10px] text-gray-300 truncate font-medium">
+          <span className="text-[9px] text-gray-400 font-mono">{widgetId}</span>
+          <span className="text-[10px] text-gray-600 truncate font-medium">
             {widget.title || "Untitled"}
           </span>
-          <span className="text-[9px] bg-gray-800 text-gray-500 px-1 rounded">
+          <span className="text-[9px] bg-gray-100 text-gray-400 px-1 rounded">
             {widget.chart_type || "bar"}
           </span>
         </div>
@@ -109,7 +109,7 @@ function WidgetCard({
             e.stopPropagation();
             onRemove();
           }}
-          className="text-gray-600 hover:text-red-400 text-[10px] px-1 transition-colors"
+          className="text-gray-400 hover:text-red-700 text-[10px] px-1 transition-colors"
           title="Remove widget"
         >
           ✕
@@ -121,7 +121,7 @@ function WidgetCard({
         {widget.data?.length && widget.series?.length ? (
           <ChartRenderer chart={widget} />
         ) : (
-          <div className="flex items-center justify-center h-full text-gray-600 text-[10px]">
+          <div className="flex items-center justify-center h-full text-gray-400 text-[10px]">
             No data
           </div>
         )}
@@ -144,17 +144,17 @@ export function WidgetEditor({
   onClose: () => void;
 }) {
   return (
-    <div className="border border-gray-700 rounded-lg bg-gray-900/80 overflow-hidden">
-      <div className="px-3 py-2 border-b border-gray-700 flex items-center justify-between">
+    <div className="border border-gray-200 rounded-lg bg-white/80 overflow-hidden">
+      <div className="px-3 py-2 border-b border-gray-200 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">
+          <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">
             Edit Widget
           </span>
-          <span className="text-[10px] font-mono text-purple-400">{widgetId}</span>
+          <span className="text-[10px] font-mono text-brand-500">{widgetId}</span>
         </div>
         <button
           onClick={onClose}
-          className="text-gray-500 hover:text-white text-xs px-1"
+          className="text-gray-400 hover:text-gray-900 text-xs px-1"
         >
           ✕
         </button>
@@ -162,18 +162,18 @@ export function WidgetEditor({
       <div className="p-3 grid grid-cols-2 gap-3">
         {/* Title */}
         <div className="col-span-2">
-          <label className="block text-[10px] text-gray-500 mb-1">Title</label>
+          <label className="block text-[10px] text-gray-400 mb-1">Title</label>
           <input
             type="text"
             value={widget.title || ""}
             onChange={(e) => onUpdate({ title: e.target.value })}
-            className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-purple-500"
+            className="w-full bg-gray-100 border border-gray-200 rounded px-2 py-1 text-xs text-gray-900 focus:outline-none focus:border-brand-300"
           />
         </div>
 
         {/* Chart Type */}
         <div>
-          <label className="block text-[10px] text-gray-500 mb-1">Chart Type</label>
+          <label className="block text-[10px] text-gray-400 mb-1">Chart Type</label>
           <div className="flex flex-wrap gap-1">
             {CHART_TYPES.map((ct) => (
               <button
@@ -181,8 +181,8 @@ export function WidgetEditor({
                 onClick={() => onUpdate({ chart_type: ct })}
                 className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${
                   (widget.chart_type || "bar") === ct
-                    ? "bg-purple-600 text-white"
-                    : "bg-gray-800 text-gray-400 hover:text-white"
+                    ? "bg-brand-500 text-white"
+                    : "bg-gray-100 text-gray-500 hover:text-gray-900"
                 }`}
               >
                 {ct}
@@ -194,28 +194,28 @@ export function WidgetEditor({
         {/* Axis Labels */}
         <div className="flex gap-2">
           <div className="flex-1">
-            <label className="block text-[10px] text-gray-500 mb-1">X Label</label>
+            <label className="block text-[10px] text-gray-400 mb-1">X Label</label>
             <input
               type="text"
               value={widget.x_label || ""}
               onChange={(e) => onUpdate({ x_label: e.target.value })}
-              className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-purple-500"
+              className="w-full bg-gray-100 border border-gray-200 rounded px-2 py-1 text-xs text-gray-900 focus:outline-none focus:border-brand-300"
             />
           </div>
           <div className="flex-1">
-            <label className="block text-[10px] text-gray-500 mb-1">Y Label</label>
+            <label className="block text-[10px] text-gray-400 mb-1">Y Label</label>
             <input
               type="text"
               value={widget.y_label || ""}
               onChange={(e) => onUpdate({ y_label: e.target.value })}
-              className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-purple-500"
+              className="w-full bg-gray-100 border border-gray-200 rounded px-2 py-1 text-xs text-gray-900 focus:outline-none focus:border-brand-300"
             />
           </div>
         </div>
 
         {/* Toggles */}
         <div>
-          <label className="block text-[10px] text-gray-500 mb-1">Display</label>
+          <label className="block text-[10px] text-gray-400 mb-1">Display</label>
           <div className="flex flex-wrap gap-2">
             {(
               [
@@ -226,13 +226,13 @@ export function WidgetEditor({
             ).map(([key, label]) => (
               <label
                 key={key}
-                className="flex items-center gap-1 text-[10px] text-gray-400 cursor-pointer"
+                className="flex items-center gap-1 text-[10px] text-gray-500 cursor-pointer"
               >
                 <input
                   type="checkbox"
                   checked={widget[key] ?? key !== "stacked"}
                   onChange={(e) => onUpdate({ [key]: e.target.checked })}
-                  className="rounded bg-gray-800 border-gray-600 text-purple-500 focus:ring-purple-500 focus:ring-offset-0 w-3 h-3"
+                  className="rounded bg-gray-100 border-gray-300 text-brand-500 focus:ring-brand-500 focus:ring-offset-0 w-3 h-3"
                 />
                 {label}
               </label>
@@ -243,12 +243,12 @@ export function WidgetEditor({
         {/* Series Colors */}
         {widget.series && widget.series.length > 0 && (
           <div>
-            <label className="block text-[10px] text-gray-500 mb-1">Series Colors</label>
+            <label className="block text-[10px] text-gray-400 mb-1">Series Colors</label>
             <div className="flex flex-wrap gap-2">
               {widget.series.map((s, i) => (
                 <label
                   key={s.key}
-                  className="flex items-center gap-1 text-[10px] text-gray-400"
+                  className="flex items-center gap-1 text-[10px] text-gray-500"
                 >
                   <input
                     type="color"
@@ -325,7 +325,7 @@ export default function DashboardGrid({
 
   if (widgetIds.length === 0) {
     return (
-      <div className="flex items-center justify-center h-full text-gray-600">
+      <div className="flex items-center justify-center h-full text-gray-400">
         <div className="text-center">
           <div className="text-4xl mb-2">📊</div>
           <p className="text-sm">No widgets yet</p>
@@ -334,9 +334,9 @@ export default function DashboardGrid({
           </p>
           <div className="mt-3 space-y-1 text-[10px] text-gray-700 text-left px-2">
             <p>Try:</p>
-            <p className="text-gray-500">"Create a dashboard with revenue and cost charts"</p>
-            <p className="text-gray-500">"Add a pie chart of market share"</p>
-            <p className="text-gray-500">"Show me monthly sales data as a line chart"</p>
+            <p className="text-gray-400">"Create a dashboard with revenue and cost charts"</p>
+            <p className="text-gray-400">"Add a pie chart of market share"</p>
+            <p className="text-gray-400">"Show me monthly sales data as a line chart"</p>
           </div>
         </div>
       </div>

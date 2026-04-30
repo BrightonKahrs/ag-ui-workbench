@@ -24,6 +24,7 @@ export interface ChatMessage {
   reasoningTokens?: number;
   reasoningContent?: string;
   isReasoning?: boolean;
+  order: number;
 }
 
 export type ToolCallStatus = "calling" | "awaiting_approval" | "complete" | "rejected" | "error";
@@ -34,6 +35,7 @@ export interface ToolCall {
   args: string;
   result?: string;
   status: ToolCallStatus;
+  order: number;
 }
 
 /** Pending HITL approval info extracted from confirm_changes tool call */
@@ -102,6 +104,7 @@ export function useAgentStream(
 
   const abortRef = useRef<AbortController | null>(null);
   const eventCounterRef = useRef(0);
+  const orderCounterRef = useRef(0);
   const conversationRef = useRef<AGUIMessage[]>([]);
   const threadIdRef = useRef<string | null>(null);
   const pendingApprovalRef = useRef<PendingApproval | null>(null);
@@ -127,6 +130,8 @@ export function useAgentStream(
       humanInTheLoop: toggles.humanInTheLoop,
       modelMode: toggles.modelMode,
       reasoningEffort: toggles.reasoningEffort,
+      provider: toggles.providerConfig.provider,
+      model: toggles.providerConfig.model,
     },
   }), [toggles]);
 
@@ -177,6 +182,7 @@ export function useAgentStream(
             case AGUIEventType.TEXT_MESSAGE_START: {
               currentMessageId = event.messageId;
               currentContent = "";
+              const msgOrder = orderCounterRef.current++;
               // If there's a preceding reasoning-only message, merge it
               // into this text message instead of creating a new one
               setMessages((prev) => {
@@ -208,6 +214,7 @@ export function useAgentStream(
                     role: "assistant" as const,
                     content: "",
                     isStreaming: true,
+                    order: msgOrder,
                   },
                 ];
               });
@@ -252,6 +259,7 @@ export function useAgentStream(
                 name: event.toolCallName,
                 args: "",
                 status: "calling",
+                order: orderCounterRef.current++,
               };
               setToolCalls((prev) => [...prev, tc]);
               break;
@@ -425,6 +433,7 @@ export function useAgentStream(
                 content: "",
                 isReasoning: true,
                 reasoningContent: "",
+                order: orderCounterRef.current++,
               };
               setMessages((prev) => [...prev, reasoningMsg]);
               break;
@@ -496,6 +505,7 @@ export function useAgentStream(
         id: `msg-${Date.now()}`,
         role: "user",
         content,
+        order: orderCounterRef.current++,
       };
       setMessages((prev) => [...prev, userMsg]);
       conversationRef.current.push({ role: "user", content });

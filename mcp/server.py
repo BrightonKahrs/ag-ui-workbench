@@ -1,15 +1,16 @@
-"""MCP Server for the AG-UI Playground.
+"""Sales Data MCP Server for the AG-UI Playground.
 
-Exposes demo tools via the Model Context Protocol over Streamable HTTP.
+Exposes sales/CRM data tools via the Model Context Protocol over Streamable HTTP.
+Backed by a SQLite database with customers, deals, orders, products, and activities.
 Includes MCP App tools with interactive UIs served as resources.
 
-Run: `cd backend && uv run python ../mcp/server.py`
+Run: `cd mcp && python server.py`
 The chat agent connects via MCPStreamableHTTPTool at /mcp.
 """
 
 import json
 import math
-import random
+import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -20,7 +21,8 @@ from starlette.responses import HTMLResponse, JSONResponse, Response
 
 # --- Constants ---
 
-RESOURCE_MIME_TYPE = "text/html;profile=mcp-app"
+DB_PATH = Path(__file__).parent / "sales_data.db"
+RESOURCE_MIME_TYPE = "text/html"
 UI_DIST_DIR = Path(__file__).parent / "ui" / "dist"
 
 DATASET_EXPLORER_URI = "ui://ag-ui-playground/dataset-explorer.html"
@@ -31,220 +33,270 @@ INTERACTIVE_CHART_URI = "ui://ag-ui-playground/interactive-chart.html"
 MCP_APP_TOOLS = {"explore_dataset_app", "visualize_statistics_app", "create_chart_app"}
 
 mcp = FastMCP(
-    name="PlaygroundMCPServer",
-    instructions="Local MCP server with data & knowledge tools for the AG-UI Playground.",
+    name="SalesDataMCPServer",
+    instructions=(
+        "Sales & CRM data MCP server for the AG-UI Playground. "
+        "Provides tools to query customers, deals, orders, products, activities, "
+        "pipeline summaries, rep performance, and revenue analytics from a SQLite database."
+    ),
 )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Knowledge Base Tools
+# Database Helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-KNOWLEDGE_BASE = {
-    "ag-ui": {
-        "title": "AG-UI Protocol",
-        "content": (
-            "AG-UI (Agent-User Interaction) is an open protocol for streaming "
-            "agent responses to frontends. It uses Server-Sent Events (SSE) over "
-            "HTTP POST with ~16+ event types: RUN_STARTED/FINISHED, TEXT_MESSAGE_*, "
-            "TOOL_CALL_*, STATE_SNAPSHOT/DELTA, STEP_*, REASONING_*, and CUSTOM events. "
-            "State management uses JSON Patch (RFC 6902) for incremental updates."
-        ),
-    },
-    "agent-framework": {
-        "title": "Microsoft Agent Framework",
-        "content": (
-            "Microsoft Agent Framework is a Python SDK for building AI agents. "
-            "Key components: Agent (core), FoundryChatClient (Azure AI Foundry), "
-            "@tool decorator, MCPStdioTool/MCPStreamableHTTPTool for MCP integration, "
-            "and agent-framework-ag-ui for AG-UI protocol streaming."
-        ),
-    },
-    "mcp": {
-        "title": "Model Context Protocol (MCP)",
-        "content": (
-            "MCP is an open standard for connecting AI assistants to external tools "
-            "and data sources. It supports stdio, streamable HTTP, and WebSocket transports. "
-            "MCP servers expose tools and prompts; MCP clients (like agent frameworks) "
-            "discover and invoke them. FastMCP is a high-level Python framework for "
-            "building MCP servers."
-        ),
-    },
-    "recharts": {
-        "title": "Recharts",
-        "content": (
-            "Recharts is a React charting library built on D3. It provides composable "
-            "chart components: BarChart, LineChart, AreaChart, PieChart, ScatterChart, "
-            "and ComposedChart. Charts are responsive via ResponsiveContainer and "
-            "support tooltips, legends, and grid lines."
-        ),
-    },
-}
+def _get_db() -> sqlite3.Connection:
+    """Get a read-only database connection."""
+    conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    return conn
 
+
+def _rows_to_dicts(rows: list[sqlite3.Row]) -> list[dict]:
+    """Convert sqlite3.Row objects to plain dicts."""
+    return [dict(row) for row in rows]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Sales Data Tools
+# ─────────────────────────────────────────────────────────────────────────────
 
 @mcp.tool()
-def search_knowledge_base(query: str) -> str:
-    """Search the playground knowledge base for information about technologies used.
+def query_sales(query: str) -> str:
+    """Run a read-only SQL query against the sales database. Returns results as JSON.
+
+    Available tables: customers, sales_reps, deals, orders, products, activities.
+    Only SELECT statements are allowed.
 
     Args:
-        query: Search term (e.g., 'ag-ui', 'mcp', 'agent-framework', 'recharts')
+        query: A SQL SELECT query to execute.
     """
-    query_lower = query.lower()
-    results = []
-    for key, entry in KNOWLEDGE_BASE.items():
-        if (query_lower in key
-                or query_lower in entry["title"].lower()
-                or query_lower in entry["content"].lower()):
-            results.append(f"### {entry['title']}\n{entry['content']}")
-    if not results:
-        return f"No entries found for '{query}'. Available topics: {', '.join(KNOWLEDGE_BASE.keys())}"
-    return "\n\n".join(results)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Dataset Tools
-# ─────────────────────────────────────────────────────────────────────────────
-
-DATASETS = {
-    "sales": {
-        "name": "Quarterly Sales",
-        "description": "Regional sales data by quarter",
-        "columns": ["region", "quarter", "revenue", "units_sold", "profit_margin"],
-        "row_count": 20,
-    },
-    "users": {
-        "name": "User Metrics",
-        "description": "Monthly active users and engagement metrics",
-        "columns": ["month", "active_users", "new_signups", "churn_rate", "avg_session_min"],
-        "row_count": 12,
-    },
-    "products": {
-        "name": "Product Catalog",
-        "description": "Product inventory and pricing",
-        "columns": ["product_id", "name", "category", "price", "stock", "rating"],
-        "row_count": 15,
-    },
-}
+    query_stripped = query.strip().rstrip(";")
+    if not query_stripped.upper().startswith("SELECT"):
+        return json.dumps({"error": "Only SELECT queries are allowed."})
+    try:
+        conn = _get_db()
+        cursor = conn.execute(query_stripped)
+        rows = cursor.fetchall()
+        result = _rows_to_dicts(rows)
+        conn.close()
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
 
 
 @mcp.tool()
-def list_datasets() -> str:
-    """List all available datasets in the playground data store."""
-    result = []
-    for key, ds in DATASETS.items():
-        result.append({
-            "id": key,
-            "name": ds["name"],
-            "description": ds["description"],
-            "columns": ds["columns"],
-            "row_count": ds["row_count"],
-        })
+def get_pipeline_summary() -> str:
+    """Return the deal pipeline grouped by stage with count and total value."""
+    conn = _get_db()
+    rows = conn.execute("""
+        SELECT stage, COUNT(*) as deal_count, ROUND(SUM(value), 2) as total_value,
+               ROUND(AVG(probability), 2) as avg_probability
+        FROM deals
+        GROUP BY stage
+        ORDER BY CASE stage
+            WHEN 'prospecting' THEN 1
+            WHEN 'qualification' THEN 2
+            WHEN 'proposal' THEN 3
+            WHEN 'negotiation' THEN 4
+            WHEN 'closed_won' THEN 5
+            WHEN 'closed_lost' THEN 6
+        END
+    """).fetchall()
+    conn.close()
+    return json.dumps(_rows_to_dicts(rows), indent=2)
+
+
+@mcp.tool()
+def get_top_customers(limit: int = 10) -> str:
+    """Return top customers ranked by total order value.
+
+    Args:
+        limit: Number of customers to return (default 10).
+    """
+    conn = _get_db()
+    rows = conn.execute("""
+        SELECT c.id, c.name, c.company, c.industry, c.tier,
+               COUNT(o.id) as order_count,
+               ROUND(SUM(o.total), 2) as total_revenue
+        FROM customers c
+        JOIN orders o ON o.customer_id = c.id
+        GROUP BY c.id
+        ORDER BY total_revenue DESC
+        LIMIT ?
+    """, (limit,)).fetchall()
+    conn.close()
+    return json.dumps(_rows_to_dicts(rows), indent=2)
+
+
+@mcp.tool()
+def get_sales_rep_performance() -> str:
+    """Return each sales rep's total deals, wins, closed revenue, and quota attainment."""
+    conn = _get_db()
+    rows = conn.execute("""
+        SELECT
+            sr.id, sr.name, sr.region, sr.quota,
+            COUNT(d.id) as total_deals,
+            SUM(CASE WHEN d.stage = 'closed_won' THEN 1 ELSE 0 END) as wins,
+            SUM(CASE WHEN d.stage = 'closed_lost' THEN 1 ELSE 0 END) as losses,
+            ROUND(SUM(CASE WHEN d.stage = 'closed_won' THEN d.value ELSE 0 END), 2) as closed_revenue,
+            ROUND(
+                SUM(CASE WHEN d.stage = 'closed_won' THEN d.value ELSE 0 END) / sr.quota * 100, 1
+            ) as quota_attainment_pct
+        FROM sales_reps sr
+        LEFT JOIN deals d ON d.sales_rep_id = sr.id
+        GROUP BY sr.id
+        ORDER BY closed_revenue DESC
+    """).fetchall()
+    conn.close()
+    return json.dumps(_rows_to_dicts(rows), indent=2)
+
+
+@mcp.tool()
+def search_customers(term: str) -> str:
+    """Search customers by name, company, or industry.
+
+    Args:
+        term: Search term to match against customer name, company, or industry.
+    """
+    conn = _get_db()
+    like = f"%{term}%"
+    rows = conn.execute("""
+        SELECT id, name, company, email, phone, industry, tier, created_at
+        FROM customers
+        WHERE name LIKE ? OR company LIKE ? OR industry LIKE ?
+        ORDER BY company
+    """, (like, like, like)).fetchall()
+    conn.close()
+    return json.dumps(_rows_to_dicts(rows), indent=2)
+
+
+@mcp.tool()
+def get_customer_360(customer_id: int) -> str:
+    """Full 360-degree customer view: info, deals, orders, and activities.
+
+    Args:
+        customer_id: The customer ID to look up.
+    """
+    conn = _get_db()
+    customer = conn.execute(
+        "SELECT * FROM customers WHERE id = ?", (customer_id,)
+    ).fetchone()
+    if not customer:
+        conn.close()
+        return json.dumps({"error": f"Customer {customer_id} not found."})
+
+    deals = conn.execute(
+        "SELECT * FROM deals WHERE customer_id = ? ORDER BY created_at DESC", (customer_id,)
+    ).fetchall()
+    orders = conn.execute(
+        "SELECT * FROM orders WHERE customer_id = ? ORDER BY order_date DESC", (customer_id,)
+    ).fetchall()
+    activities = conn.execute(
+        "SELECT * FROM activities WHERE customer_id = ? ORDER BY date DESC LIMIT 20", (customer_id,)
+    ).fetchall()
+    conn.close()
+
+    result = {
+        "customer": dict(customer),
+        "deals": _rows_to_dicts(deals),
+        "orders": _rows_to_dicts(orders),
+        "recent_activities": _rows_to_dicts(activities),
+    }
     return json.dumps(result, indent=2)
 
 
 @mcp.tool()
-def query_dataset(dataset_id: str, limit: int = 5) -> str:
-    """Query a dataset and return sample rows.
+def get_revenue_by_month() -> str:
+    """Return monthly revenue from orders, sorted chronologically."""
+    conn = _get_db()
+    rows = conn.execute("""
+        SELECT
+            strftime('%Y-%m', order_date) as month,
+            COUNT(*) as order_count,
+            ROUND(SUM(total), 2) as revenue
+        FROM orders
+        WHERE status != 'returned'
+        GROUP BY month
+        ORDER BY month
+    """).fetchall()
+    conn.close()
+    return json.dumps(_rows_to_dicts(rows), indent=2)
+
+
+@mcp.tool()
+def get_deals_by_stage(stage: str = None) -> str:
+    """List deals, optionally filtered by pipeline stage.
 
     Args:
-        dataset_id: The dataset to query (sales, users, or products).
-        limit: Maximum number of rows to return (default 5, max 20).
+        stage: Filter by stage (prospecting/qualification/proposal/negotiation/closed_won/closed_lost). If None, returns all.
     """
-    if dataset_id not in DATASETS:
-        return f"Dataset '{dataset_id}' not found. Available: {', '.join(DATASETS.keys())}"
-    ds = DATASETS[dataset_id]
-    limit = min(limit, ds["row_count"])
-    rows = _generate_rows(dataset_id, limit)
-    return json.dumps(rows, indent=2)
-
-
-def _generate_rows(dataset_id: str, count: int) -> list[dict]:
-    """Generate realistic sample data for a dataset."""
-    random.seed(42)
-    if dataset_id == "sales":
-        regions = ["North", "South", "East", "West"]
-        quarters = ["Q1", "Q2", "Q3", "Q4"]
-        return [
-            {
-                "region": regions[i % len(regions)],
-                "quarter": quarters[i // len(regions) % len(quarters)],
-                "revenue": round(random.uniform(50000, 200000), 2),
-                "units_sold": random.randint(100, 500),
-                "profit_margin": round(random.uniform(0.1, 0.4), 2),
-            }
-            for i in range(count)
-        ]
-    elif dataset_id == "users":
-        months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-        base_users = 10000
-        return [
-            {
-                "month": months[i % 12],
-                "active_users": base_users + i * random.randint(200, 800),
-                "new_signups": random.randint(500, 2000),
-                "churn_rate": round(random.uniform(0.02, 0.08), 3),
-                "avg_session_min": round(random.uniform(5, 25), 1),
-            }
-            for i in range(count)
-        ]
-    else:  # products
-        categories = ["Electronics", "Clothing", "Home", "Sports", "Books"]
-        return [
-            {
-                "product_id": f"PROD-{1000 + i}",
-                "name": f"Product {chr(65 + i)}",
-                "category": categories[i % len(categories)],
-                "price": round(random.uniform(9.99, 299.99), 2),
-                "stock": random.randint(0, 500),
-                "rating": round(random.uniform(3.0, 5.0), 1),
-            }
-            for i in range(count)
-        ]
+    conn = _get_db()
+    if stage:
+        rows = conn.execute("""
+            SELECT d.id, d.title, d.value, d.stage, d.probability, d.created_at, d.close_date,
+                   c.company as customer_company, sr.name as rep_name
+            FROM deals d
+            JOIN customers c ON c.id = d.customer_id
+            JOIN sales_reps sr ON sr.id = d.sales_rep_id
+            WHERE d.stage = ?
+            ORDER BY d.value DESC
+        """, (stage,)).fetchall()
+    else:
+        rows = conn.execute("""
+            SELECT d.id, d.title, d.value, d.stage, d.probability, d.created_at, d.close_date,
+                   c.company as customer_company, sr.name as rep_name
+            FROM deals d
+            JOIN customers c ON c.id = d.customer_id
+            JOIN sales_reps sr ON sr.id = d.sales_rep_id
+            ORDER BY d.value DESC
+        """).fetchall()
+    conn.close()
+    return json.dumps(_rows_to_dicts(rows), indent=2)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Utility Tools
+# Dataset / Utility Tools (adapted for sales data)
 # ─────────────────────────────────────────────────────────────────────────────
 
 @mcp.tool()
-def compute_statistics(numbers: list[float]) -> str:
-    """Compute descriptive statistics for a list of numbers.
-
-    Args:
-        numbers: A list of numeric values.
-    """
-    if not numbers:
-        return json.dumps({"error": "Empty list"})
-    n = len(numbers)
-    sorted_nums = sorted(numbers)
-    mean = sum(numbers) / n
-    median = (sorted_nums[n // 2] if n % 2 == 1
-              else (sorted_nums[n // 2 - 1] + sorted_nums[n // 2]) / 2)
-    variance = sum((x - mean) ** 2 for x in numbers) / n
-    std_dev = math.sqrt(variance)
-    return json.dumps({
-        "count": n,
-        "mean": round(mean, 4),
-        "median": round(median, 4),
-        "std_dev": round(std_dev, 4),
-        "min": min(numbers),
-        "max": max(numbers),
-        "sum": round(sum(numbers), 4),
-    }, indent=2)
+def list_datasets() -> str:
+    """List all available tables in the sales SQLite database."""
+    conn = _get_db()
+    tables = conn.execute("""
+        SELECT name FROM sqlite_master WHERE type='table' ORDER BY name
+    """).fetchall()
+    result = []
+    for t in tables:
+        table_name = t["name"]
+        count = conn.execute(f"SELECT COUNT(*) as cnt FROM {table_name}").fetchone()["cnt"]
+        cols = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+        result.append({
+            "id": table_name,
+            "name": table_name,
+            "description": f"Sales database table: {table_name}",
+            "columns": [c["name"] for c in cols],
+            "row_count": count,
+        })
+    conn.close()
+    return json.dumps(result, indent=2)
 
 
 @mcp.tool()
 def get_server_info() -> str:
     """Get information about this MCP server and its capabilities."""
     return json.dumps({
-        "name": "PlaygroundMCPServer",
+        "name": "SalesDataMCPServer",
         "protocol": "MCP (Model Context Protocol)",
         "transport": "Streamable HTTP",
         "port": 8889,
+        "database": str(DB_PATH),
         "tools": [
-            "search_knowledge_base", "list_datasets", "query_dataset",
-            "compute_statistics", "get_server_info",
+            "query_sales", "get_pipeline_summary", "get_top_customers",
+            "get_sales_rep_performance", "search_customers", "get_customer_360",
+            "get_revenue_by_month", "get_deals_by_stage",
+            "list_datasets", "get_server_info",
             "explore_dataset_app", "visualize_statistics_app", "create_chart_app",
         ],
         "mcp_apps": list(MCP_APP_TOOLS),
@@ -262,31 +314,37 @@ def get_server_info() -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 @mcp.tool(meta={"ui": {"resourceUri": DATASET_EXPLORER_URI}})
-def explore_dataset_app(dataset_id: str, limit: int = 10) -> CallToolResult:
-    """Explore a dataset with an interactive table UI.
+def explore_dataset_app(table_name: str, limit: int = 10) -> CallToolResult:
+    """Explore a sales database table with an interactive table UI.
 
     This is an MCP App tool — it returns data AND provides an interactive
-    HTML interface for exploring, sorting, and filtering the dataset.
+    HTML interface for exploring, sorting, and filtering the data.
 
     Args:
-        dataset_id: The dataset to explore (sales, users, or products).
-        limit: Number of rows to display (default 10, max 20).
+        table_name: The database table to explore (customers, sales_reps, deals, orders, products, activities).
+        limit: Number of rows to display (default 10, max 100).
     """
-    if dataset_id not in DATASETS:
+    allowed_tables = {"customers", "sales_reps", "deals", "orders", "products", "activities"}
+    if table_name not in allowed_tables:
         return CallToolResult(
-            content=[TextContent(type="text", text=f"Dataset '{dataset_id}' not found.")],
+            content=[TextContent(type="text", text=f"Table '{table_name}' not found. Available: {', '.join(sorted(allowed_tables))}")],
         )
-    ds = DATASETS[dataset_id]
-    limit = min(limit, ds["row_count"])
-    rows = _generate_rows(dataset_id, limit)
+
+    conn = _get_db()
+    cols = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+    column_names = [c["name"] for c in cols]
+    limit = min(limit, 100)
+    rows = conn.execute(f"SELECT * FROM {table_name} LIMIT ?", (limit,)).fetchall()
+    total = conn.execute(f"SELECT COUNT(*) as cnt FROM {table_name}").fetchone()["cnt"]
+    conn.close()
 
     data = {
-        "dataset_id": dataset_id,
-        "name": ds["name"],
-        "description": ds["description"],
-        "columns": ds["columns"],
-        "rows": rows,
-        "total_rows": ds["row_count"],
+        "dataset_id": table_name,
+        "name": table_name,
+        "description": f"Sales database table: {table_name}",
+        "columns": column_names,
+        "rows": _rows_to_dicts(rows),
+        "total_rows": total,
     }
     return CallToolResult(
         content=[TextContent(type="text", text=json.dumps(data))],

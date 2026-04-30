@@ -84,6 +84,8 @@ export function useSharedState(
         forwardedProps: {
           playground: {
             smartDelta: toggles?.smartDelta ?? true,
+            provider: toggles?.providerConfig?.provider ?? "foundry",
+            model: toggles?.providerConfig?.model,
           },
         },
       };
