@@ -1,9 +1,9 @@
 """Basic streaming chat agent for the AG-UI Workbench."""
 
 import os
-from typing import Optional
+from typing import Any, Optional
 
-from agent_framework import Agent, MCPStreamableHTTPTool
+from agent_framework import Agent, ChatMessage, MCPStreamableHTTPTool
 from agent_framework.anthropic import AnthropicClient
 from agent_framework.foundry import FoundryChatClient
 from agent_framework.openai import OpenAIChatClient, OpenAIChatOptions
@@ -17,6 +17,29 @@ from tools.demo_tools import (
     get_weather,
     get_weather_hitl,
 )
+
+
+class PatchedAnthropicClient(AnthropicClient):
+    """AnthropicClient with fix for adaptive thinking in multi-turn tool loops.
+
+    The base class serializes thinking blocks as {"type": "thinking", "thinking": content.text}
+    but content.text can be None for some thinking blocks (especially with adaptive thinking),
+    which causes Anthropic's API to reject the request. This subclass filters those out.
+    """
+
+    def _prepare_message_for_anthropic(self, message: ChatMessage) -> dict[str, Any]:
+        result = super()._prepare_message_for_anthropic(message)
+        # Filter out thinking blocks with invalid (None/empty) thinking content
+        if "content" in result and isinstance(result["content"], list):
+            result["content"] = [
+                block for block in result["content"]
+                if not (
+                    isinstance(block, dict)
+                    and block.get("type") == "thinking"
+                    and not block.get("thinking")
+                )
+            ]
+        return result
 
 
 def _create_client(provider: str = "foundry", model: str | None = None):
@@ -35,7 +58,7 @@ def _create_client(provider: str = "foundry", model: str | None = None):
     elif provider == "anthropic":
         api_key = os.environ.get("ANTHROPIC_API_KEY", "")
         resolved_model = model or "claude-sonnet-4-6"
-        return AnthropicClient(
+        return PatchedAnthropicClient(
             model=resolved_model,
             api_key=api_key,
         ), resolved_model
@@ -80,11 +103,11 @@ def create_chat_agent(
     if model_mode == "reasoning":
         if provider == "anthropic":
             resolved_model_name = model or "claude-sonnet-4-6"
-            # Opus 4.7+ doesn't support manual thinking config via agent-framework
-            # (adaptive thinking breaks on multi-turn tool-use loops).
-            # It reasons well by default — just increase max_tokens.
+            # Opus 4.7+ uses adaptive thinking with output_config.effort
             if "opus-4-7" in resolved_model_name:
                 default_options = {
+                    "thinking": {"type": "adaptive"},
+                    "output_config": {"effort": reasoning_effort},
                     "max_tokens": 16000,
                 }
             else:
