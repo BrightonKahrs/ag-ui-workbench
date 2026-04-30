@@ -2,6 +2,8 @@
 
 import json
 import os
+import sqlite3
+from pathlib import Path
 
 import jsonpatch
 from agent_framework import Agent, tool
@@ -11,6 +13,21 @@ from azure.identity import DefaultAzureCredential
 from pydantic import BaseModel
 
 import state_store
+
+# --- Sales Database Path ---
+SALES_DB_PATH = Path(__file__).parent.parent.parent / "mcp" / "sales_data.db"
+
+
+def _get_sales_db() -> sqlite3.Connection:
+    """Get a read-only connection to the sales SQLite database."""
+    conn = sqlite3.connect(f"file:{SALES_DB_PATH}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _rows_to_dicts(rows: list[sqlite3.Row]) -> list[dict]:
+    """Convert sqlite3.Row objects to plain dicts."""
+    return [dict(row) for row in rows]
 
 # --- Pydantic models (validation only, NOT used as tool param types) ---
 
@@ -335,6 +352,174 @@ def get_dashboard_info() -> str:
     return "\n".join(lines)
 
 
+# --- Sales Data Query Tools ---
+
+
+@tool
+def query_sales_data(query: str) -> str:
+    """Run a read-only SQL query against the sales database. Returns results as JSON.
+
+    Available tables: customers, sales_reps, deals, orders, products, activities.
+    Only SELECT statements are allowed.
+
+    Args:
+        query: A SQL SELECT query to execute.
+
+    Returns:
+        JSON string of query results.
+    """
+    query_stripped = query.strip().rstrip(";")
+    if not query_stripped.upper().startswith("SELECT"):
+        return json.dumps({"error": "Only SELECT queries are allowed."})
+    try:
+        conn = _get_sales_db()
+        cursor = conn.execute(query_stripped)
+        rows = cursor.fetchall()
+        result = _rows_to_dicts(rows)
+        conn.close()
+        return json.dumps(result[:100], indent=2) if len(result) > 100 else json.dumps(result, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@tool
+def get_pipeline_summary() -> str:
+    """Return the deal pipeline grouped by stage with count and total value.
+
+    Returns:
+        JSON with stages, deal counts, total values, and average probabilities.
+    """
+    conn = _get_sales_db()
+    rows = conn.execute("""
+        SELECT stage, COUNT(*) as deal_count, ROUND(SUM(value), 2) as total_value,
+               ROUND(AVG(probability), 2) as avg_probability
+        FROM deals
+        GROUP BY stage
+        ORDER BY CASE stage
+            WHEN 'prospecting' THEN 1
+            WHEN 'qualification' THEN 2
+            WHEN 'proposal' THEN 3
+            WHEN 'negotiation' THEN 4
+            WHEN 'closed_won' THEN 5
+            WHEN 'closed_lost' THEN 6
+        END
+    """).fetchall()
+    conn.close()
+    return json.dumps(_rows_to_dicts(rows), indent=2)
+
+
+@tool
+def get_revenue_by_month() -> str:
+    """Return monthly revenue from orders, sorted chronologically.
+
+    Returns:
+        JSON with month, order_count, and revenue for each month.
+    """
+    conn = _get_sales_db()
+    rows = conn.execute("""
+        SELECT
+            strftime('%Y-%m', order_date) as month,
+            COUNT(*) as order_count,
+            ROUND(SUM(total), 2) as revenue
+        FROM orders
+        WHERE status != 'returned'
+        GROUP BY month
+        ORDER BY month
+    """).fetchall()
+    conn.close()
+    return json.dumps(_rows_to_dicts(rows), indent=2)
+
+
+@tool
+def get_top_customers(limit: str = "10") -> str:
+    """Return top customers ranked by total order value.
+
+    Args:
+        limit: Number of customers to return (default "10").
+
+    Returns:
+        JSON with customer details and total revenue.
+    """
+    try:
+        n = int(limit)
+    except ValueError:
+        n = 10
+    conn = _get_sales_db()
+    rows = conn.execute("""
+        SELECT c.id, c.name, c.company, c.industry, c.tier,
+               COUNT(o.id) as order_count,
+               ROUND(SUM(o.total), 2) as total_revenue
+        FROM customers c
+        JOIN orders o ON o.customer_id = c.id
+        GROUP BY c.id
+        ORDER BY total_revenue DESC
+        LIMIT ?
+    """, (n,)).fetchall()
+    conn.close()
+    return json.dumps(_rows_to_dicts(rows), indent=2)
+
+
+@tool
+def get_sales_rep_performance() -> str:
+    """Return each sales rep's total deals, wins, closed revenue, and quota attainment.
+
+    Returns:
+        JSON with rep performance metrics.
+    """
+    conn = _get_sales_db()
+    rows = conn.execute("""
+        SELECT
+            sr.id, sr.name, sr.region, sr.quota,
+            COUNT(d.id) as total_deals,
+            SUM(CASE WHEN d.stage = 'closed_won' THEN 1 ELSE 0 END) as wins,
+            SUM(CASE WHEN d.stage = 'closed_lost' THEN 1 ELSE 0 END) as losses,
+            ROUND(SUM(CASE WHEN d.stage = 'closed_won' THEN d.value ELSE 0 END), 2) as closed_revenue,
+            ROUND(
+                SUM(CASE WHEN d.stage = 'closed_won' THEN d.value ELSE 0 END) / sr.quota * 100, 1
+            ) as quota_attainment_pct
+        FROM sales_reps sr
+        LEFT JOIN deals d ON d.sales_rep_id = sr.id
+        GROUP BY sr.id
+        ORDER BY closed_revenue DESC
+    """).fetchall()
+    conn.close()
+    return json.dumps(_rows_to_dicts(rows), indent=2)
+
+
+@tool
+def get_deals_by_stage(stage: str = "") -> str:
+    """List deals, optionally filtered by pipeline stage.
+
+    Args:
+        stage: Filter by stage (prospecting/qualification/proposal/negotiation/closed_won/closed_lost). Empty string returns all.
+
+    Returns:
+        JSON with deal details including customer and rep info.
+    """
+    conn = _get_sales_db()
+    if stage and stage.strip():
+        rows = conn.execute("""
+            SELECT d.id, d.title, d.value, d.stage, d.probability, d.created_at, d.close_date,
+                   c.company as customer_company, sr.name as rep_name
+            FROM deals d
+            JOIN customers c ON c.id = d.customer_id
+            JOIN sales_reps sr ON sr.id = d.sales_rep_id
+            WHERE d.stage = ?
+            ORDER BY d.value DESC
+        """, (stage.strip(),)).fetchall()
+    else:
+        rows = conn.execute("""
+            SELECT d.id, d.title, d.value, d.stage, d.probability, d.created_at, d.close_date,
+                   c.company as customer_company, sr.name as rep_name
+            FROM deals d
+            JOIN customers c ON c.id = d.customer_id
+            JOIN sales_reps sr ON sr.id = d.sales_rep_id
+            ORDER BY d.value DESC
+        """).fetchall()
+    conn.close()
+    return json.dumps(_rows_to_dicts(rows), indent=2)
+
+
 # --- Agent Creation ---
 
 
@@ -352,10 +537,20 @@ def create_dashboard_agent() -> AgentFrameworkAgent:
 
     base_agent = Agent(
         name="DashboardAgent",
-        instructions="""You are a dashboard builder in the AG-UI Playground.
-You create and manage a multi-widget dashboard with interactive charts.
+        instructions="""You are a dashboard builder in the AG-UI Workbench.
+You create and manage a multi-widget dashboard with interactive charts,
+powered by REAL sales data from a SQLite database.
 
-TOOLS:
+DATA TOOLS (query real sales/CRM data):
+- query_sales_data: Run any SELECT query against the sales DB.
+  Tables: customers, sales_reps, deals, orders, products, activities.
+- get_pipeline_summary: Deal pipeline by stage (count, value, probability).
+- get_revenue_by_month: Monthly revenue from orders.
+- get_top_customers: Top customers ranked by total order value.
+- get_sales_rep_performance: Rep metrics (deals, wins, revenue, quota%).
+- get_deals_by_stage: List deals, optionally filtered by stage.
+
+DASHBOARD TOOLS (create/modify charts):
 - add_widget: Add a NEW chart widget to the dashboard grid.
 - update_widget: REPLACE a widget entirely (new data or major restructure).
 - patch_widget: Apply SMALL changes to one widget (color, title, label, toggle).
@@ -364,8 +559,13 @@ TOOLS:
 - patch_dashboard: Change dashboard-level properties (title).
 - get_dashboard_info: List all widgets with IDs and positions.
 
+WORKFLOW:
+1. When user asks for a chart/dashboard, FIRST query the real data using data tools.
+2. Then use the dashboard tools to create/update widgets with the REAL data.
+3. NEVER make up fake data — always query it from the database first.
+
 RULES:
-1. For NEW widgets: use add_widget with complete chart JSON.
+1. For NEW widgets: query data first, then use add_widget with complete chart JSON.
 2. For SMALL CHANGES: use patch_widget with JSON Patch ops.
 3. If unsure about IDs/structure, call get_dashboard_info first.
 4. After calling any tool, give a brief 1-2 sentence summary.
@@ -380,9 +580,17 @@ COLOR PALETTE:
 #00a4ef (blue), #a2aaad (silver), #4285f4 (google blue), #ff9900 (orange),
 #36cfc9 (teal), #f759ab (pink)
 
-When asked for sample data, generate realistic data. Keep responses concise.""",
+Keep responses concise.""",
         client=chat_client,
         tools=[
+            # Sales data tools
+            query_sales_data,
+            get_pipeline_summary,
+            get_revenue_by_month,
+            get_top_customers,
+            get_sales_rep_performance,
+            get_deals_by_stage,
+            # Dashboard manipulation tools
             add_widget,
             update_widget,
             patch_widget,

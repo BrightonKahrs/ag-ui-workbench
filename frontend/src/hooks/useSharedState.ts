@@ -26,6 +26,14 @@ export interface SharedToolCall {
   args: string;
   result?: string;
   status: ToolCallStatus;
+  order: number;
+}
+
+export interface SharedMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  order: number;
 }
 
 export interface SharedStateReturn {
@@ -38,7 +46,7 @@ export interface SharedStateReturn {
   clearState: () => void;
   clearEvents: () => void;
   cancelRun: () => void;
-  messages: Array<{ id: string; role: "user" | "assistant"; content: string }>;
+  messages: SharedMessage[];
   toolCalls: SharedToolCall[];
 }
 
@@ -52,13 +60,12 @@ export function useSharedState(
   const [events, setEvents] = useState<TimestampedEvent[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [messages, setMessages] = useState<
-    Array<{ id: string; role: "user" | "assistant"; content: string }>
-  >([]);
+  const [messages, setMessages] = useState<SharedMessage[]>([]);
   const [toolCalls, setToolCalls] = useState<SharedToolCall[]>([]);
 
   const abortRef = useRef<AbortController | null>(null);
   const eventCounterRef = useRef(0);
+  const orderCounterRef = useRef(0);
   const conversationRef = useRef<AGUIMessage[]>([]);
   const stateRef = useRef<Record<string, unknown>>({});
   const threadIdRef = useRef<string | null>(null);
@@ -84,7 +91,7 @@ export function useSharedState(
 
       setMessages((prev) => [
         ...prev,
-        { id: `msg-${Date.now()}`, role: "user", content },
+        { id: `msg-${Date.now()}`, role: "user", content, order: orderCounterRef.current++ },
       ]);
       conversationRef.current.push({ role: "user", content });
 
@@ -163,7 +170,7 @@ export function useSharedState(
               currentContent = "";
               setMessages((prev) => [
                 ...prev,
-                { id: event.messageId, role: "assistant", content: "" },
+                { id: event.messageId, role: "assistant", content: "", order: orderCounterRef.current++ },
               ]);
               break;
             }
@@ -201,7 +208,7 @@ export function useSharedState(
             case AGUIEventType.TOOL_CALL_START: {
               setToolCalls((prev) => [
                 ...prev,
-                { id: event.toolCallId, name: event.toolCallName, args: "", status: "calling" },
+                { id: event.toolCallId, name: event.toolCallName, args: "", status: "calling", order: orderCounterRef.current++ },
               ]);
               break;
             }
@@ -256,6 +263,7 @@ export function useSharedState(
     stateRef.current = {};
     setMessages([]);
     setToolCalls([]);
+    orderCounterRef.current = 0;
     conversationRef.current = [];
     threadIdRef.current = null;
   }, []);

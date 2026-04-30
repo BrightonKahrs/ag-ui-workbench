@@ -217,35 +217,70 @@ export default function SharedStateTab({ onEvents, toggles }: Props) {
                 </div>
               )}
 
-              {messages.map((msg) => (
-                <div
-                  key={msg.id}
-                  className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-                >
-                  <div
-                    className={`max-w-[90%] rounded-lg px-3 py-2 ${
-                      msg.role === "user"
-                        ? "bg-brand-600 text-white"
-                        : "bg-gray-100 text-gray-700"
-                    }`}
-                  >
-                    <div className="text-[10px] text-gray-500 font-semibold uppercase">
-                      {msg.role}
-                    </div>
-                    <div className="text-xs whitespace-pre-wrap">{msg.content}</div>
-                  </div>
-                </div>
-              ))}
+              {/* Interleaved timeline of messages + tool calls */}
+              {(() => {
+                type TimelineItem =
+                  | { kind: "msg"; data: typeof messages[0] }
+                  | { kind: "tool"; data: typeof toolCalls[0] };
+                const items: TimelineItem[] = [
+                  ...messages.map((m) => ({ kind: "msg" as const, data: m })),
+                  ...(toggles.toolCalls
+                    ? toolCalls.map((tc) => ({ kind: "tool" as const, data: tc }))
+                    : []),
+                ];
+                items.sort((a, b) => a.data.order - b.data.order);
 
-              {/* Tool Calls */}
-              {toolCalls.length > 0 && (
-                <div className="space-y-1.5">
-                  {toolCalls.map((tc) => (
+                return items.map((item) => {
+                  if (item.kind === "msg") {
+                    const msg = item.data;
+                    return (
+                      <div
+                        key={msg.id}
+                        className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+                      >
+                        <div
+                          className={`max-w-[90%] rounded-lg px-3 py-2 ${
+                            msg.role === "user"
+                              ? "bg-brand-600 text-white"
+                              : "bg-gray-100 text-gray-700"
+                          }`}
+                        >
+                          <div className="text-[10px] text-gray-500 font-semibold uppercase">
+                            {msg.role}
+                          </div>
+                          <div className="text-xs whitespace-pre-wrap">{msg.content}</div>
+                        </div>
+                      </div>
+                    );
+                  }
+                  // Tool call — respect display mode
+                  const tc = item.data;
+                  if (toggles.toolDisplayMode === "inline") {
+                    return (
+                      <div key={tc.id} className="text-[10px] text-gray-500 flex items-center gap-1 py-0.5">
+                        <span>{tc.status === "calling" ? "⏳" : "✅"}</span>
+                        <span className="font-medium">{tc.name}</span>
+                        {tc.result && <span className="text-gray-400 truncate max-w-[150px]">→ {tc.result.slice(0, 60)}</span>}
+                      </div>
+                    );
+                  }
+                  if (toggles.toolDisplayMode === "timeline") {
+                    return (
+                      <div key={tc.id} className="flex items-start gap-2 py-1 border-l-2 border-amber-300 pl-2">
+                        <span className="text-[10px] mt-0.5">{tc.status === "calling" ? "⏳" : "✅"}</span>
+                        <div className="flex-1 min-w-0">
+                          <span className="text-[10px] font-medium text-amber-800">{tc.name}</span>
+                          {tc.args && <pre className="text-[9px] text-gray-500 truncate">{tc.args.slice(0, 80)}</pre>}
+                          {tc.result && <pre className="text-[9px] text-green-700 truncate">{tc.result.slice(0, 80)}</pre>}
+                        </div>
+                      </div>
+                    );
+                  }
+                  // card (default)
+                  return (
                     <div key={tc.id} className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
                       <div className="flex items-center gap-1.5">
-                        <span className="text-[10px]">
-                          {tc.status === "calling" ? "⏳" : tc.status === "complete" ? "✅" : "❌"}
-                        </span>
+                        <span className="text-[10px]">{tc.status === "calling" ? "⏳" : "✅"}</span>
                         <span className="text-[10px] font-medium text-amber-800">{tc.name}</span>
                       </div>
                       {tc.args && (
@@ -259,9 +294,9 @@ export default function SharedStateTab({ onEvents, toggles }: Props) {
                         </pre>
                       )}
                     </div>
-                  ))}
-                </div>
-              )}
+                  );
+                });
+              })()}
 
               {error && (
                 <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2">
