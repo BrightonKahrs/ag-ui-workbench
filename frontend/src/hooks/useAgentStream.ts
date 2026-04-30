@@ -424,18 +424,41 @@ export function useAgentStream(
             }
 
             case AGUIEventType.REASONING_START: {
-              // Create a placeholder assistant message for reasoning
+              // Reuse existing reasoning message if one exists (handles providers
+              // like Anthropic that emit multiple reasoning blocks per response)
               reasoningMessageId = event.messageId;
-              reasoningContent = "";
-              const reasoningMsg: ChatMessage = {
-                id: event.messageId,
-                role: "assistant",
-                content: "",
-                isReasoning: true,
-                reasoningContent: "",
-                order: orderCounterRef.current++,
-              };
-              setMessages((prev) => [...prev, reasoningMsg]);
+              // Don't reset reasoningContent — append across blocks
+              setMessages((prev) => {
+                const lastIdx = prev.length - 1;
+                const last = lastIdx >= 0 ? prev[lastIdx] : null;
+                // If last message is a reasoning-only assistant message (no text content),
+                // reuse it instead of creating a new bubble
+                if (
+                  last &&
+                  last.role === "assistant" &&
+                  !last.content &&
+                  last.reasoningContent !== undefined
+                ) {
+                  // Preserve existing reasoning content, just update ID and mark active
+                  reasoningContent = last.reasoningContent || "";
+                  return prev.map((m, i) =>
+                    i === lastIdx
+                      ? { ...m, id: event.messageId, isReasoning: true }
+                      : m
+                  );
+                }
+                // Create a new reasoning message
+                reasoningContent = "";
+                const reasoningMsg: ChatMessage = {
+                  id: event.messageId,
+                  role: "assistant",
+                  content: "",
+                  isReasoning: true,
+                  reasoningContent: "",
+                  order: orderCounterRef.current++,
+                };
+                return [...prev, reasoningMsg];
+              });
               break;
             }
 

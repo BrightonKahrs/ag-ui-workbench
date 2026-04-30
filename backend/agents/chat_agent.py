@@ -79,13 +79,22 @@ def create_chat_agent(
     default_options: dict | None = None
     if model_mode == "reasoning":
         if provider == "anthropic":
-            # Anthropic uses extended thinking with budget_tokens
-            budget_map = {"low": 2048, "medium": 4096, "high": 8192}
-            budget = budget_map.get(reasoning_effort, 4096)
-            default_options = {
-                "thinking": {"type": "enabled", "budget_tokens": budget},
-                "max_tokens": 16000,
-            }
+            resolved_model_name = model or "claude-sonnet-4-6"
+            # Opus 4.7+ uses adaptive thinking with output_config.effort
+            # Older models (Sonnet 4.6, Haiku 4.5) use enabled thinking with budget_tokens
+            if "opus-4-7" in resolved_model_name:
+                default_options = {
+                    "thinking": {"type": "adaptive"},
+                    "output_config": {"effort": reasoning_effort},
+                    "max_tokens": 16000,
+                }
+            else:
+                budget_map = {"low": 2048, "medium": 4096, "high": 8192}
+                budget = budget_map.get(reasoning_effort, 4096)
+                default_options = {
+                    "thinking": {"type": "enabled", "budget_tokens": budget},
+                    "max_tokens": 16000,
+                }
         else:
             # OpenAI/Foundry use reasoning effort
             default_options = OpenAIChatOptions(
