@@ -10,6 +10,7 @@ import { useEffect, useRef, useState } from "react";
 import type { FeatureToggles, TimestampedEvent } from "../types/ag-ui";
 import { useSharedState } from "../hooks/useSharedState";
 import TaskPlan from "./TaskPlan";
+import MarkdownContent from "./MarkdownContent";
 
 interface Props {
   onEvents: (events: TimestampedEvent[]) => void;
@@ -150,7 +151,7 @@ export default function PlanTab({ onEvents, toggles }: Props) {
                     <div className="text-[10px] text-gray-500 font-semibold uppercase">
                       {msg.role}
                     </div>
-                    <div className="text-xs whitespace-pre-wrap">{msg.content}</div>
+                    <div className="text-xs"><MarkdownContent content={msg.content} /></div>
                   </div>
                 </div>
               ))}

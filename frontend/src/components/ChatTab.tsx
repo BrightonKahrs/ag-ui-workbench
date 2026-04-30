@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { FeatureToggles, TimestampedEvent, ToolDisplayMode, ReasoningDisplayMode } from "../types/ag-ui";
 import { useAgentStream, type ToolCall } from "../hooks/useAgentStream";
 import McpAppViewer from "./McpAppViewer";
+import MarkdownContent from "./MarkdownContent";
 
 interface Props {
   toggles: FeatureToggles;
@@ -379,8 +380,8 @@ export default function ChatTab({ toggles, onEvents }: Props) {
                         tokenCount={msg.reasoningTokens}
                       />
                     )}
-                    <div className="text-sm whitespace-pre-wrap leading-relaxed">
-                      {msg.content}
+                    <div className="text-sm leading-relaxed">
+                      <MarkdownContent content={msg.content} />
                       {msg.isStreaming && (
                         <span className={`cursor-blink ${msg.role === "user" ? "text-white/70" : "text-brand-400"}`}>▌</span>
                       )}

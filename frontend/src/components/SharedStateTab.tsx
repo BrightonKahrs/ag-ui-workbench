@@ -7,6 +7,7 @@ import DashboardGrid, {
   type WidgetState,
   type LayoutItem,
 } from "./DashboardGrid";
+import MarkdownContent from "./MarkdownContent";
 
 interface Props {
   onEvents: (events: TimestampedEvent[]) => void;
@@ -248,7 +249,7 @@ export default function SharedStateTab({ onEvents, toggles }: Props) {
                           <div className="text-[10px] text-gray-500 font-semibold uppercase">
                             {msg.role}
                           </div>
-                          <div className="text-xs whitespace-pre-wrap">{msg.content}</div>
+                          <div className="text-xs"><MarkdownContent content={msg.content} /></div>
                         </div>
                       </div>
                     );

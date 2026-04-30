@@ -262,7 +262,7 @@ export interface ProviderConfig {
 export const PROVIDER_MODELS: Record<Provider, string[]> = {
   foundry: ["gpt-4.1-mini", "gpt-4.1", "gpt-5-mini", "gpt-5"],
   openai: ["gpt-4.1-mini", "gpt-4.1", "gpt-5-mini", "gpt-5", "o3-mini"],
-  anthropic: ["claude-sonnet-4-20250514", "claude-haiku-4-20250414"],
+  anthropic: ["claude-sonnet-4-6", "claude-opus-4-7", "claude-haiku-4-5-20251001"],
 };
 
 export const PROVIDER_LABELS: Record<Provider, string> = {
@@ -270,6 +270,8 @@ export const PROVIDER_LABELS: Record<Provider, string> = {
   openai: "OpenAI",
   anthropic: "Anthropic",
 };
+
+
 
 export interface FeatureToggles {
   streaming: boolean;

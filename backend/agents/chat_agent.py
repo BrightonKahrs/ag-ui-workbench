@@ -25,7 +25,7 @@ def _create_client(provider: str = "foundry", model: str | None = None):
     Supports:
     - foundry: Azure AI Foundry (default)
     - openai: Direct OpenAI API
-    - anthropic: Anthropic via OpenAI-compatible endpoint
+    - anthropic: Anthropic Claude via native SDK
     """
     if provider == "openai":
         api_key = os.environ.get("OPENAI_API_KEY", "")
@@ -34,7 +34,7 @@ def _create_client(provider: str = "foundry", model: str | None = None):
 
     elif provider == "anthropic":
         api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-        resolved_model = model or "claude-sonnet-4-20250514"
+        resolved_model = model or "claude-sonnet-4-6"
         return AnthropicClient(
             model=resolved_model,
             api_key=api_key,
@@ -76,11 +76,21 @@ def create_chat_agent(
     chat_client, resolved_model = _create_client(provider, model)
 
     # Configure reasoning options for reasoning models
-    default_options: OpenAIChatOptions | None = None
+    default_options: dict | None = None
     if model_mode == "reasoning":
-        default_options = OpenAIChatOptions(
-            reasoning={"effort": reasoning_effort, "summary": "auto"},
-        )
+        if provider == "anthropic":
+            # Anthropic uses extended thinking with budget_tokens
+            budget_map = {"low": 2048, "medium": 4096, "high": 8192}
+            budget = budget_map.get(reasoning_effort, 4096)
+            default_options = {
+                "thinking": {"type": "enabled", "budget_tokens": budget},
+                "max_tokens": 16000,
+            }
+        else:
+            # OpenAI/Foundry use reasoning effort
+            default_options = OpenAIChatOptions(
+                reasoning={"effort": reasoning_effort, "summary": "auto"},
+            )
 
     # Select tool versions based on HITL mode
     if hitl:
