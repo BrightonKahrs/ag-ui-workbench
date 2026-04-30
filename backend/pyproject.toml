@@ -5,6 +5,7 @@ description = "AG-UI Playground - Educational demo of AG-UI protocol with Micros
 requires-python = ">=3.10"
 dependencies = [
     "agent-framework-ag-ui",
+    "agent-framework-anthropic",
     "agent-framework-foundry",
     "fastapi",
     "uvicorn[standard]",

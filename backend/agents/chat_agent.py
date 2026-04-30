@@ -4,8 +4,9 @@ import os
 from typing import Optional
 
 from agent_framework import Agent, MCPStreamableHTTPTool
+from agent_framework.anthropic import AnthropicClient
 from agent_framework.foundry import FoundryChatClient
-from agent_framework.openai import OpenAIChatClient, OpenAIChatCompletionClient, OpenAIChatOptions
+from agent_framework.openai import OpenAIChatClient, OpenAIChatOptions
 from azure.identity import DefaultAzureCredential
 
 from tools.demo_tools import (
@@ -34,10 +35,9 @@ def _create_client(provider: str = "foundry", model: str | None = None):
     elif provider == "anthropic":
         api_key = os.environ.get("ANTHROPIC_API_KEY", "")
         resolved_model = model or "claude-sonnet-4-20250514"
-        return OpenAIChatCompletionClient(
+        return AnthropicClient(
             model=resolved_model,
             api_key=api_key,
-            base_url="https://openai.api.anthropic.com/v1",
         ), resolved_model
 
     else:  # foundry (default)
