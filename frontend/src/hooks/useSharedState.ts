@@ -133,9 +133,9 @@ export function useSharedState(
             case AGUIEventType.STATE_DELTA: {
               try {
                 const patched = applyPatch(
-                  stateRef.current,
+                  JSON.parse(JSON.stringify(stateRef.current)),
                   event.delta as Operation[],
-                  true,
+                  false,
                   false,
                 );
                 stateRef.current = patched.newDocument;
