@@ -128,8 +128,11 @@ export function useAgentStream(
     playground: {
       toolCalls: toggles.toolCalls,
       humanInTheLoop: toggles.humanInTheLoop,
-      modelMode: toggles.modelMode,
+      modelMode: toggles.providerConfig.provider === "anthropic"
+        ? (toggles.thinkingEnabled ? "reasoning" : "chat")
+        : toggles.modelMode,
       reasoningEffort: toggles.reasoningEffort,
+      thinkingBudget: toggles.thinkingBudget,
       provider: toggles.providerConfig.provider,
       model: toggles.providerConfig.model,
     },

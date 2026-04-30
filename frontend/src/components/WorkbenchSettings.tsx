@@ -145,23 +145,70 @@ export default function WorkbenchSettings({ toggles, onChange, activeTab }: Prop
 
       <div className="border-t border-gray-100" />
 
-      {/* Model Mode */}
+      {/* Model Mode — provider-specific */}
       <div>
         <SectionHeader>Model Mode</SectionHeader>
-        <SegmentedControl<ModelMode>
-          options={["chat", "reasoning"]}
-          value={toggles.modelMode}
-          onChange={(modelMode) => update({ modelMode })}
-        />
-        {toggles.modelMode === "reasoning" && (
-          <div className="mt-3">
-            <div className="text-[11px] text-gray-500 font-medium mb-1.5 px-1">Reasoning Effort</div>
-            <SegmentedControl<ReasoningEffort>
-              options={["low", "medium", "high"]}
-              value={toggles.reasoningEffort}
-              onChange={(reasoningEffort) => update({ reasoningEffort })}
+        {toggles.providerConfig.provider === "anthropic" ? (
+          <>
+            {/* Anthropic: Thinking on/off + budget slider */}
+            <div className="flex items-center justify-between px-1">
+              <span className="text-xs text-gray-600">Extended Thinking</span>
+              <button
+                onClick={() => update({ thinkingEnabled: !toggles.thinkingEnabled })}
+                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+                  toggles.thinkingEnabled ? "bg-brand-500" : "bg-gray-300"
+                }`}
+              >
+                <span
+                  className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                    toggles.thinkingEnabled ? "translate-x-[18px]" : "translate-x-[3px]"
+                  }`}
+                />
+              </button>
+            </div>
+            {toggles.thinkingEnabled && (
+              <div className="mt-3 px-1">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-[11px] text-gray-500 font-medium">Thinking Budget</span>
+                  <span className="text-[11px] text-gray-500 font-mono">{toggles.thinkingBudget.toLocaleString()} tokens</span>
+                </div>
+                <input
+                  type="range"
+                  min={1024}
+                  max={32000}
+                  step={1024}
+                  value={toggles.thinkingBudget}
+                  onChange={(e) => update({ thinkingBudget: Number(e.target.value) })}
+                  className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-brand-500"
+                />
+                <div className="flex justify-between text-[10px] text-gray-400 mt-0.5">
+                  <span>1K</span>
+                  <span>8K</span>
+                  <span>16K</span>
+                  <span>32K</span>
+                </div>
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            {/* OpenAI/Foundry: Chat vs Reasoning + effort */}
+            <SegmentedControl<ModelMode>
+              options={["chat", "reasoning"]}
+              value={toggles.modelMode}
+              onChange={(modelMode) => update({ modelMode })}
             />
-          </div>
+            {toggles.modelMode === "reasoning" && (
+              <div className="mt-3">
+                <div className="text-[11px] text-gray-500 font-medium mb-1.5 px-1">Reasoning Effort</div>
+                <SegmentedControl<ReasoningEffort>
+                  options={["low", "medium", "high"]}
+                  value={toggles.reasoningEffort}
+                  onChange={(reasoningEffort) => update({ reasoningEffort })}
+                />
+              </div>
+            )}
+          </>
         )}
       </div>
 

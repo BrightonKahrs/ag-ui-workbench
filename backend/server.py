@@ -365,12 +365,13 @@ async def dynamic_chat_endpoint(request_body: AGUIRequest) -> StreamingResponse:
     model_mode = playground.get("modelMode", "chat")
     hitl = playground.get("humanInTheLoop", False)
     reasoning_effort = playground.get("reasoningEffort", "medium")
+    thinking_budget = playground.get("thinkingBudget", 4096)
     provider = playground.get("provider", "foundry")
     model = playground.get("model", None)
 
     logger.info(
         f"[/chat] provider={provider}, model={model}, model_mode={model_mode}, hitl={hitl}, "
-        f"reasoning_effort={reasoning_effort}, messages={len(input_data.get('messages', []))}"
+        f"reasoning_effort={reasoning_effort}, thinking_budget={thinking_budget}, messages={len(input_data.get('messages', []))}"
     )
 
     base_agent = create_chat_agent(
@@ -378,6 +379,7 @@ async def dynamic_chat_endpoint(request_body: AGUIRequest) -> StreamingResponse:
         hitl=hitl,
         mcp_tools=mcp_tool,
         reasoning_effort=reasoning_effort,
+        thinking_budget=thinking_budget,
         provider=provider,
         model=model,
     )

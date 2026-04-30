@@ -79,6 +79,7 @@ def create_chat_agent(
     hitl: bool = False,
     mcp_tools: Optional[MCPStreamableHTTPTool] = None,
     reasoning_effort: str = "medium",
+    thinking_budget: int = 4096,
     provider: str = "foundry",
     model: str | None = None,
 ) -> Agent:
@@ -89,6 +90,7 @@ def create_chat_agent(
         hitl: If True, all tools require human approval before execution.
         mcp_tools: Optional MCPStreamableHTTPTool for connecting to local MCP server.
         reasoning_effort: Reasoning effort level ("low", "medium", "high") for reasoning models.
+        thinking_budget: Token budget for Anthropic extended thinking (1024-128000).
         provider: Provider to use ("foundry", "openai", "anthropic").
         model: Specific model name to use (overrides default for provider).
     """
@@ -102,11 +104,9 @@ def create_chat_agent(
     default_options: dict | None = None
     if model_mode == "reasoning":
         if provider == "anthropic":
-            # All models use enabled thinking with budget_tokens
-            budget_map = {"low": 2048, "medium": 4096, "high": 8192}
-            budget = budget_map.get(reasoning_effort, 4096)
+            # Use the budget_tokens value directly from the frontend slider
             default_options = {
-                "thinking": {"type": "enabled", "budget_tokens": budget},
+                "thinking": {"type": "enabled", "budget_tokens": thinking_budget},
                 "max_tokens": 16000,
             }
         else:

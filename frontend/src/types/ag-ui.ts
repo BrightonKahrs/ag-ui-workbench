@@ -283,6 +283,8 @@ export interface FeatureToggles {
   stepEvents: boolean;
   modelMode: ModelMode;
   reasoningEffort: ReasoningEffort;
+  thinkingEnabled: boolean;
+  thinkingBudget: number;
   toolDisplayMode: ToolDisplayMode;
   reasoningDisplayMode: ReasoningDisplayMode;
   showTokenUsage: boolean;
@@ -299,6 +301,8 @@ export const DEFAULT_TOGGLES: FeatureToggles = {
   stepEvents: true,
   modelMode: "chat",
   reasoningEffort: "medium",
+  thinkingEnabled: false,
+  thinkingBudget: 4096,
   toolDisplayMode: "card",
   reasoningDisplayMode: "summary",
   showTokenUsage: true,
