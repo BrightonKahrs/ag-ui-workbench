@@ -286,7 +286,7 @@ export default function SharedStateTab({ onEvents, toggles }: Props) {
             rawStateOpen ? "w-72" : "w-0 border-r-0"
           }`}
         >
-          <div className="w-72 flex-1 flex flex-col">
+          <div className="w-72 flex-1 flex flex-col min-h-0">
             {/* Collapse arrow inside panel */}
             <div className="flex justify-end px-2 pt-1 shrink-0">
               <button
@@ -305,7 +305,7 @@ export default function SharedStateTab({ onEvents, toggles }: Props) {
                 <span className="text-[10px] text-amber-700">● modified</span>
               )}
             </div>
-            <pre className="flex-1 text-[10px] text-gray-500 bg-gray-50 p-3 overflow-auto mx-3 mb-3 rounded font-mono">
+            <pre className="flex-1 min-h-0 text-[10px] text-gray-500 bg-gray-50 p-3 overflow-auto mx-3 mb-3 rounded font-mono">
               {JSON.stringify(state, null, 2)}
             </pre>
           </div>
