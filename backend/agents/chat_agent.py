@@ -80,15 +80,15 @@ def create_chat_agent(
     if model_mode == "reasoning":
         if provider == "anthropic":
             resolved_model_name = model or "claude-sonnet-4-6"
-            # Opus 4.7+ uses adaptive thinking with output_config.effort
-            # Older models (Sonnet 4.6, Haiku 4.5) use enabled thinking with budget_tokens
+            # Opus 4.7+ doesn't support manual thinking config via agent-framework
+            # (adaptive thinking breaks on multi-turn tool-use loops).
+            # It reasons well by default — just increase max_tokens.
             if "opus-4-7" in resolved_model_name:
                 default_options = {
-                    "thinking": {"type": "adaptive"},
-                    "output_config": {"effort": reasoning_effort},
                     "max_tokens": 16000,
                 }
             else:
+                # Sonnet/Haiku use enabled thinking with budget_tokens
                 budget_map = {"low": 2048, "medium": 4096, "high": 8192}
                 budget = budget_map.get(reasoning_effort, 4096)
                 default_options = {
