@@ -3,7 +3,7 @@
 import os
 from typing import Any, Optional
 
-from agent_framework import Agent, ChatMessage, MCPStreamableHTTPTool
+from agent_framework import Agent, MCPStreamableHTTPTool
 from agent_framework.anthropic import AnthropicClient
 from agent_framework.foundry import FoundryChatClient
 from agent_framework.openai import OpenAIChatClient, OpenAIChatOptions
@@ -27,7 +27,7 @@ class PatchedAnthropicClient(AnthropicClient):
     which causes Anthropic's API to reject the request. This subclass filters those out.
     """
 
-    def _prepare_message_for_anthropic(self, message: ChatMessage) -> dict[str, Any]:
+    def _prepare_message_for_anthropic(self, message: Any) -> dict[str, Any]:
         result = super()._prepare_message_for_anthropic(message)
         # Filter out thinking blocks with invalid (None/empty) thinking content
         if "content" in result and isinstance(result["content"], list):
