@@ -205,16 +205,20 @@ function buildRunChains(events: TimestampedEvent[], viewMode: ViewMode): Inspect
       }
       items.push({ kind: "request", id: te.id, entry: te });
     } else if (te.event.type === AGUIEventType.RUN_STARTED) {
-      // Flush any preceding events as an incomplete chain
-      if (currentChain.length > 0 && chainStarted) {
-        flushChain(false, false);
-      } else if (currentChain.length > 0) {
-        flushChain(false, false);
+      if (chainStarted) {
+        // A RUN_STARTED while a chain is already open (sub-run from workflow executors) —
+        // absorb it into the current chain instead of creating a separate incomplete chain
+        currentChain.push(te);
+      } else {
+        // First RUN_STARTED — start a new chain
+        if (currentChain.length > 0) {
+          flushChain(false, false);
+        }
+        chainStarted = true;
+        currentRunId = (te.event as { runId?: string }).runId || null;
+        currentThreadId = (te.event as { threadId?: string }).threadId || null;
+        currentChain.push(te);
       }
-      chainStarted = true;
-      currentRunId = (te.event as { runId?: string }).runId || null;
-      currentThreadId = (te.event as { threadId?: string }).threadId || null;
-      currentChain.push(te);
     } else if (te.event.type === AGUIEventType.RUN_FINISHED) {
       currentChain.push(te);
       flushChain(true, false);

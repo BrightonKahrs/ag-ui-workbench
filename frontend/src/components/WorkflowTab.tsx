@@ -3,7 +3,8 @@
  * via a 3-stage Research Pipeline workflow.
  *
  * Shows a pipeline visualizer with executor cards that update in real-time
- * as STEP_STARTED/STEP_FINISHED and ACTIVITY_SNAPSHOT events arrive.
+ * as STEP_STARTED/STEP_FINISHED and ACTIVITY_SNAPSHOT events arrive,
+ * plus a chat thread showing user questions and stage outputs.
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -13,6 +14,7 @@ import {
   type ActivityItem,
   type ChatMessage,
 } from "../hooks/useAgentStream";
+import MarkdownContent from "./MarkdownContent";
 
 interface Props {
   toggles: FeatureToggles;
@@ -129,11 +131,6 @@ export default function WorkflowTab({ toggles, onEvents }: Props) {
     sendMessage(trimmed);
   };
 
-  // Get stage outputs from assistant messages
-  const stageOutputs = messages.filter(
-    (m: ChatMessage) => m.role === "assistant" && m.content,
-  );
-
   const [pipelineOpen, setPipelineOpen] = useState(true);
   const [outputOpen, setOutputOpen] = useState(true);
 
@@ -194,14 +191,14 @@ export default function WorkflowTab({ toggles, onEvents }: Props) {
         </div>
       </div>
 
-      {/* Stage Outputs — flies in/out */}
+      {/* Chat + Stage Outputs — flies in/out */}
       <div
         className={`flex-1 overflow-y-auto transition-all duration-300 ease-in-out ${
           outputOpen ? "opacity-100" : "opacity-0 max-h-0 overflow-hidden"
         }`}
       >
         <div ref={outputRef} className="p-4 space-y-4 h-full overflow-y-auto">
-          {stageOutputs.length === 0 && !isRunning && (
+          {messages.length === 0 && !isRunning && (
             <div className="text-center text-gray-400 mt-12">
               <p className="text-4xl mb-4">🔬</p>
               <p className="text-lg font-medium">Research Pipeline</p>
@@ -211,18 +208,40 @@ export default function WorkflowTab({ toggles, onEvents }: Props) {
             </div>
           )}
 
-          {stageOutputs.map((msg: ChatMessage) => (
-            <div
-              key={msg.id}
-              className="bg-gray-100 rounded-lg p-4 border border-gray-200"
-            >
-              <div className="prose prose-gray prose-sm max-w-none whitespace-pre-wrap">
-                {msg.content}
+          {messages
+            .filter((msg: ChatMessage) => msg.role === "user" || msg.content)
+            .map((msg: ChatMessage) => (
+              <div
+                key={msg.id}
+                className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+              >
+                <div
+                  className={`max-w-[75%] rounded-2xl px-4 py-3 ${
+                    msg.role === "user"
+                      ? "bg-brand-500 text-white shadow-soft"
+                      : "bg-white text-gray-800 border border-gray-200 shadow-soft"
+                  }`}
+                >
+                  {msg.role !== "user" && (
+                    <div className="text-[10px] text-gray-400 mb-1 font-medium uppercase tracking-wide">
+                      Pipeline
+                    </div>
+                  )}
+                  <div className="text-sm leading-relaxed">
+                    {msg.role === "user" ? (
+                      msg.content
+                    ) : (
+                      <MarkdownContent content={msg.content} />
+                    )}
+                    {msg.isStreaming && (
+                      <span className={`cursor-blink ${msg.role === "user" ? "text-white/70" : "text-brand-400"}`}>▌</span>
+                    )}
+                  </div>
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
 
-          {isRunning && stageOutputs.length > 0 && (
+          {isRunning && messages.some((m: ChatMessage) => m.role === "assistant") && (
             <div className="flex items-center gap-2 text-gray-500 text-sm">
               <span className="animate-pulse">⏳</span>
               <span>Pipeline running...</span>
