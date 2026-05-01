@@ -115,13 +115,12 @@ def create_chat_agent(
                 reasoning={"effort": reasoning_effort, "summary": "auto"},
             )
 
-    # Foundry's Responses API stores conversations server-side by default.
-    # Since we manage conversation state client-side (sending full history each turn),
-    # disable server-side storage to avoid conflicts on multi-turn conversations.
-    if provider == "foundry":
-        if default_options is None:
-            default_options = {}
-        default_options["store"] = False
+    # Foundry's Responses API stores conversations server-side by default
+    # (STORES_BY_DEFAULT=True). We keep store enabled so internal tool-call loops
+    # can use previous_response_id for continuation. Multi-turn history is managed
+    # client-side by sending all messages each turn.
+    # Note: Do NOT set store=False — it breaks tool-call continuation in the
+    # agent framework's internal loop.
 
     # Select tool versions based on HITL mode
     if hitl:

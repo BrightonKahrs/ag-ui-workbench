@@ -538,10 +538,6 @@ export function useAgentStream(
 
       const request: AGUIRunRequest = {
         messages: conversationRef.current,
-        // First call: no threadId → Foundry creates a new conversation.
-        // Subsequent calls: send Foundry's conversation ID back so it
-        // continues the same conversation (use_service_session=True).
-        ...(threadIdRef.current ? { threadId: threadIdRef.current } : {}),
         forwardedProps: buildForwardedProps(),
       };
 
@@ -590,7 +586,6 @@ export function useAgentStream(
 
       const request: AGUIRunRequest = {
         messages: msgs,
-        ...(threadIdRef.current ? { threadId: threadIdRef.current } : {}),
         forwardedProps: buildForwardedProps(),
         resume: {
           interrupts: [
