@@ -115,6 +115,14 @@ def create_chat_agent(
                 reasoning={"effort": reasoning_effort, "summary": "auto"},
             )
 
+    # Foundry's Responses API stores conversations server-side by default.
+    # Since we manage conversation state client-side (sending full history each turn),
+    # disable server-side storage to avoid conflicts on multi-turn conversations.
+    if provider == "foundry":
+        if default_options is None:
+            default_options = {}
+        default_options["store"] = False
+
     # Select tool versions based on HITL mode
     if hitl:
         tools: list = [get_weather_hitl, calculate_hitl, get_current_time_hitl]

@@ -373,6 +373,8 @@ async def dynamic_chat_endpoint(request_body: AGUIRequest) -> StreamingResponse:
         f"[/chat] provider={provider}, model={model}, model_mode={model_mode}, hitl={hitl}, "
         f"reasoning_effort={reasoning_effort}, thinking_budget={thinking_budget}, messages={len(input_data.get('messages', []))}"
     )
+    # Debug: log message roles and threadId for second-message failures
+    logger.debug(f"[/chat] threadId={input_data.get('thread_id')}, messages={[m.get('role') for m in input_data.get('messages', [])]}")
 
     base_agent = create_chat_agent(
         model_mode=model_mode,
